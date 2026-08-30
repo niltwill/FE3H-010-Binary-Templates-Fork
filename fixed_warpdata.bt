@@ -1,75 +1,90 @@
 //------------------------------------------------
 //--- 010 Editor v15.0.2 Binary Template
 //
-//      File: fixed_warpdata.bin
-//   Authors: Reichard
-//   Version: 1.0
-//   Purpose: parse warpdata
-//  Category: Reichard
-// File Mask: *fixed_warpdata.bin
-//  ID Bytes: 
-//   History: 
-//   1.1    09/04/25 ReichardTheThird: Added "Character Spottability" to Table2
-//   1.0    06/10/25 ReichardTheThird: started this
+//      File: fixed_warpdata.bt
+//   Authors: Reichard, niltwill
+//   Version: 2.0
+//   Purpose: Parse fixed_warpdata.bin - area warp points, pathfinding grid, character spottability
+//  Category: FE3H
+// File Mask: fixed_warpdata.bin
+//  ID Bytes:
+//   History:
+//   2.0  Aug 2026 niltwill: Decoded all field names, renamed Table1 and Table2
+//   1.1  09/04/25 ReichardTheThird: Added "Character Spottability" to Table2
+//   1.0  06/10/25 ReichardTheThird: started this
 //------------------------------------------------
+
 #include "Structs.bt"
 LittleEndian();
+
 local int i;
 
-enum<ubyte> Spottable{
-	CanBeSpotted,
-	UnknownUnplayableAnnaAlsoUnspottable,
-	CannotBeSpotted,
+typedef enum <ubyte> {
+    CanBeSpotted = 0,
+    UnknownUnplayableAlsoUnspottable = 1,
+    CannotBeSpotted = 2
+} Spottable;
+
+typedef enum <ubyte> {
+    Rotation_RightSlightlyUp = 0,
+    Rotation_UpSlightlyRight = 1,
+    Rotation_Up = 2,
+    Rotation_UpLeft = 3,
+    Rotation_Left = 4,
+    Rotation_DownLeft = 5,
+    Rotation_Down = 6,
+    Rotation_DownRight = 7
+} WarpRotation;
+
+struct sWarpPoint {
+    ushort entrance_approach_X <comment="Approach/dest X; 0 if one-way trigger">;
+    ubyte unused0x2;
+    ubyte unused0x3;
+    ushort entrance_approach_Z <comment="Approach/dest Z">;
+    ushort marker_world_Z <comment="World Z of spinning icon (used by SetPlayerStart)">;
+    ushort marker_world_X <comment="World X of spinning icon (used by SetPlayerStart)">;
+    ushort arrival_X <comment="World X where player lands after entering warp">;
+    ushort arrival_Z <comment="World Z where player lands">;
+    WarpRotation facing_after_warp <comment="Player facing octant on arrival">;
+    ubyte unused0xF;
+    ubyte warp_index <comment="Sequential 0-26 for interactive 2-way warps; 0 for 1-way triggers">;
+    ubyte unk_0x11;
+    ubyte has_destination <comment="1=two-way warp with arrival coords; 0=one-way trigger only">;
+    ubyte unk_0x13;
+    ubyte area_dest_index <comment="Area routing / WarpDest group link">;
+    ubyte padding0x15;
+};
+
+struct sWarpDest {
+    ushort grid_X <comment="World X of pathfinding grid node">;
+    ushort grid_Z <comment="World Z of pathfinding grid node">;
+};
+
+struct sCharSpottability {
+    CharID char_id;
+    Spottable spottable <comment="0=CanBeSpotted triggers 'I see X!' 2=CannotBeSpotted">;
+    ubyte padding;
 };
 
 struct GenericFile {
-	FileSections Sections;
-	
-	FSeekNextSection(Sections);
-	struct sunkTable0{
-		DataSection Header;
-		for(i=0;i<Header.NumEntries;i++){
-			struct sunkEntry0{
-				ushort unkShort2Float0x0;
-				byte unkUnused0x2;
-				byte unkUnused0x3;   
-				ushort unkShort2Float0x4;
-				ushort unkShort2Float0x6;
-				ushort unkShort2Float0x8;   
-				ushort unkShort2Float0xa;
-				ushort unkShort2Float0xc;
-				byte unkByte0xe;   
-				byte unkByte0xf;
-				byte unkByte0x10;
-				byte unkByte0x11;
-				byte unkByte0x12;
-				byte unkByte0x13;   
-				byte unkByte0x14;
-				byte unkPadding0x15;
-			}unkEntry0;   
-		};
-	}unkTable0;
-    
+    FileSections Sections;
+
     FSeekNextSection(Sections);
-	struct sunkTable1{
-		DataSection Header;
-		for(i=0;i<Header.NumEntries;i++){
-			struct sunkEntry1{
-				ushort unkShort2Float0x0;   
-				ushort unkShort2Float0x2;   
-			}unkEntry1;   
-		};
-	}unkTable1;
-    
+    struct sWarpPointTable {
+        DataSection Header;
+        sWarpPoint WarpPoints[Header.NumEntries] <comment="Yellow spinning area-switcher icons">;
+    } WarpPointTable <name="Warp Points (area-switcher icons)">;
+
     FSeekNextSection(Sections);
-	struct sunkTable2{
-		DataSection Header;
-		for(i=0;i<Header.NumEntries;i++){
-			struct sunkEntry2{
-				CharID unkShort0x0;   
-				Spottable unk0x2<name="Spotability?", comment="Shows a message when you see this character in monastery, but there are a lot of various other conditions">;
-				byte unk0x3<name="padding?">;
-			}unkEntry2;
-		};
-	}unkTable2;
-}File<open=true>;
+    struct sWarpDestTable {
+        DataSection Header;
+        sWarpDest WarpDests[Header.NumEntries] <comment="Pathfinding grid nodes; indexed by BAI Patrol Region Registry">;
+    } WarpDestTable <name="WarpDest Pathfinding Grid">;
+
+    FSeekNextSection(Sections);
+    struct sCharSpottabilityTable {
+        DataSection Header;
+        sCharSpottability Chars[Header.NumEntries] <comment="'I spotted X!' notification control per character">;
+    } CharSpottabilityTable <name="Character Spottability">;
+
+} File <open=true>;

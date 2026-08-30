@@ -1,0 +1,101 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.1 Binary Template
+//
+//      File: fixed_castle_regon_data.bt
+//   Authors: niltwill
+//   Version: 1.0
+//   Purpose: FE3H fixed_castle_regon_data.bin - online region matrix
+//  Category: Game Data
+// File Mask: fixed_castle_regon_data.bin
+//   History:
+//     1.0 - Initial RE from binary + Ghidra analysis
+//
+//------------------------------------------------
+
+// Garreg Mach Monastery region data for the online visit feature - the online liaison feature where other players' characters
+// appear as wandering ghosts in specific spots around Garreg Mach during free days.
+// Up to a handful of ghosts spawn at fixed position slots throughout the monastery, and you can examine them for items/renown.
+// This file defines which 80 region configurations are valid for this feature and their compatibility matrix.
+// The spatial tile coordinates live in fixed_areadata.bin sec3 instead.
+
+// 1. Sections 0 & 2
+// Each entry is an 80-bit little-endian bitmask: byte 0 = bits 0-7 ... byte 9 = bits 72-79
+// The 80-bit field encodes which of the 80 region slots are related to this
+// slot (adjacency / containment / compatibility). Many entries are unit bit
+// vectors (only one bit set) - the region is primitive and its single bit
+// identifies it. Complex entries (many bits set) represent aggregated or
+// derived regions (e.g. "all regions accessible from this one").
+// Unit-bit entries in Section 0: 0,2,8,14,22,39-43,46,71-78
+// Unit-bit entries in Section 2: 11,22-23,32-33,41-79
+// Entries identical in both sections (unit vectors): 22,41-43,46,71-78
+
+// 2. Sections 1 & 3
+// One byte per region slot: 0 = inactive/default, 1 = active/flagged.
+// Sections 1 and 3 are not identical, they track different state flags.
+// Sec1 non-zero indices: 2,17,18,19,20,21,31,43,58,66,68,69,70
+// Sec3 non-zero indices: 2,9,18,19,20,21,28,29
+
+// Chapter ranges:
+// type 0: chapters 0-9 (White Clouds, early)
+// type 1: chapters 10-16 (White Clouds, late)
+// type 2: chapters 17-23 (post-timeskip phase 1)
+// type 3: chapters 24-30
+// type 4: chapters 31-40
+// type 5: chapters 41-47
+// type 6: chapters 83-89 (Cindered Shadows)
+// type 7: chapters 48-60
+// type 8: chapters 61-86 (largest range - late-game)
+// types 9-30: subsequent groups of ~7 chapters each
+
+LittleEndian();
+
+typedef struct {
+    uint32 section_count <name="Section Count", comment="Always 4">;
+    uint32 header_size <name="Header Size", comment="Always 0x24 (36 bytes)">;
+    uint32 sec0_data_size <name="Sec0 Data Size", comment="0x360 = 64-byte sub-hdr + 80*10-byte entries">;
+    uint32 sec1_abs_start <name="Sec1 Abs Offset", comment="Absolute file offset of sec1 (no alignment gap in this file)">;
+    uint32 sec1_data_size <name="Sec1 Data Size", comment="0x090 = 64-byte sub-hdr + 80*1-byte entries">;
+    uint32 sec2_abs_start <name="Sec2 Abs Offset">;
+    uint32 sec2_data_size <name="Sec2 Data Size", comment="0x360 = same as sec0">;
+    uint32 sec3_abs_start <name="Sec3 Abs Offset">;
+    uint32 sec3_data_size <name="Sec3 Data Size", comment="0x090 = same as sec1. sec3_abs_start + sec3_data_size = EOF">;
+} GlobalHeader <name="Global Header", bgcolor=cLtGray>;
+
+typedef struct {
+    uint32 magic <name="Magic", format=hex, comment="Always 0x16121900">;
+    uint32 entry_count <name="Entry Count", comment="Always 80">;
+    uint32 entry_stride <name="Entry Stride", format=hex, comment="10 (0x0A) for sec0/2; 1 for sec1/3">;
+    byte padding[52] <name="Padding", hidden=true, comment="Always zero">;
+} SubHdr <name="Sub-Header", bgcolor=cLtYellow>;
+
+typedef struct {
+    ubyte bits[10] <name="80-bit Bitmask", comment="LE 80-bit region relationship bitmask. bit N = region slot N is related. Unit vectors (1 bit set) = primitive region. Multi-bit = aggregate region.">;
+} BitMask80 <name="Region Bitmask", size=10, bgcolor=cLtBlue>;
+
+typedef struct {
+    ubyte flag <name="Region Flag", comment="0=inactive/default, 1=active/flagged. Sec1 flags entries {2,17-21,31,43,58,66,68-70}; sec3 flags {2,9,18-21,28,29}.">;
+} RegionFlag <name="Region Flag", size=1, bgcolor=cLtGreen>;
+
+typedef struct {
+    SubHdr sub_hdr;
+    BitMask80 entries[sub_hdr.entry_count] <name="Region Bitmasks", optimize=false>;
+} Sec_Bitmask <name="Bitmask Section">;
+
+typedef struct {
+    SubHdr sub_hdr;
+    RegionFlag entries[sub_hdr.entry_count] <name="Region Flags", optimize=true>;
+} Sec_Flags <name="Flag Section">;
+
+GlobalHeader hdr;
+
+FSeek(hdr.header_size);
+Sec_Bitmask sec0 <name="Section 0 - Region Relationship Matrix A">;
+
+FSeek(hdr.sec1_abs_start);
+Sec_Flags sec1 <name="Section 1 - Region Active Flags A">;
+
+FSeek(hdr.sec2_abs_start);
+Sec_Bitmask sec2 <name="Section 2 - Region Relationship Matrix B">;
+
+FSeek(hdr.sec3_abs_start);
+Sec_Flags sec3 <name="Section 3 - Region Active Flags B">;

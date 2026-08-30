@@ -1,0 +1,435 @@
+//------------------------------------------------
+//--- 010 Editor v9.1.0 Binary Template
+//
+//      File: Koei Tecmo Shader (_GS2 format)
+//   Authors: HealingBrew, niltwill
+//   Version: 0.2
+//   Purpose: Parsing G2S Shader files for Fire Emblem: Three Houses (Switch v1.2.0)
+//  Category: File Format
+// File Mask: *.g2s
+//  ID Bytes: 47 32 53 5F
+//   History:
+//   0.2    2026 niltwill: Major RE-based update.
+//   0.0    2020-15-01 HealingBrew: Initial stub
+//------------------------------------------------
+
+// Each _GS2 shader declares named "material properties" that the engine queries
+// at registration time (ShaderMaterial_RegisterMaterialProperties @0x71004DC3E0).
+// Properties are looked up by a polynomial hash (h = h*27 + char) from a global
+// sorted list (DAT_71021e48d0), populated during ShaderMaterial_InitTypeRegistry.
+//
+// Known properties and their sub-parameters (where present):
+//   "AmbientOcc" - Ambient occlusion; param: fOccScaler
+//   "PatternMap" - Decal/pattern map; params: fPtn, fPtnPlSub, mW2Pt
+//   "IndexedRim" - Indexed rim lighting; param: rmIndex
+//   "IriTargetNoneOnly" - Tag: non-character iris shading only
+//   "TextureDirt" - Dirt overlay; param: dirtRate
+//   "PixelKill" - Alpha cutout; param: pixelKillThreshold
+//   "Dissolve" - Dissolve effect
+//   "ShadowMask" - Shadow masking; param: fSdmFade
+//   "Weathering" - Weathering; params: wtHSVAdj, wtDtMkFade, wtDtFade, wtDtPrms
+//                  + 32-float array + 4x4 float matrix
+//   "ColorController" - Dynamic colour swap; params: ccrACol, ccrMCol
+//   "ClothDummy" - Tag only. Marks a cloth simulation mesh. No GPU binding.
+//   "ApplyRLR" - Apply Rigid-body Linked Rendering. Binds cloth physics VB
+//                at draw time. GPU param block = 64 bytes (nvnStageMask pair).
+//   "IndexedRamp" - Toon ramp lighting; 13 params: maskFade, maskScale,
+//                   maskRotCS, rampCoeAdj, IRDFade, occThresForIRShadow,
+//                   IRShadowFade, IRLocalLightParam, IRAFade, rampCoordRange,
+//                   rampCoordScaler, rampHHLtDir, rampSDOccFade
+//   "TextureMatrix" - UV matrix; params: txRotC0, txSclC0, txTrsC0 (x3 UV sets)
+//   "EmiMap" - Emissive map; params: emGScl, emStart, emRange, emFrq
+//   "AlbedoRetouch" - Albedo adjustment
+//   "Refraction" - Refraction pass
+//   "SSSTransmit" - SSS transmittance
+//   "LightMap" - Lightmap (secondary check for PatternMap / IndexedRamp)
+//   "DisableOutline" - Disables toon outline pass
+//   "OutlineTexture" - Custom outline texture
+//
+// PBB shader name encoding (letter flags in shader name string):
+//   P=PBR base   B=base-colour  A=alpha       C=clear-coat  I=irradiance
+//   r=roughness  a=anisotropy   3=3D-noise    d=dirt        2=2nd UV set
+//   N=normal     W=wetness      t=tiling      h=height      s=SSS
+//   m=metallic   Em=emissive    Lm=lightmap   T0=T-pass0    Te=T-emission
+//   Tg=T-gradient M0=M-pass0   M3=M-pass3    Mm=metallic-map
+//   Scm=specular  Ir=irradiance  Ld=light-dir  Al=alpha-layer
+// "Di" suffix appended internally for Dissolve shader variant.
+
+LittleEndian();
+
+#include "G1SharedStructures.bt"
+
+// Shader platform / binary format
+// When G2SShaderInfo is read as a 32-bit int it equals:
+//   (nvnStageMask << 16) | shaderType
+// Expected per-section ints: 0x000058 0x010058 0x020058 0x040058 0x080058 0x100058
+typedef enum <ushort> G2SSHADERTYPE {
+    ShaderType_DXBC = 0x41,  // D3D bytecode - PC path (rejected by NX runtime)
+    ShaderType_NX = 0x58     // NVN binary - Nintendo Switch path
+} G2SShaderType;
+
+// NVN pipeline stage bitmask stored in G2SShaderInfo.nvnStageMask.
+// Each buffer section's ShaderInfo declares which stage(s) own that section.
+// Section A has nvnStageMask=0 (global / shared across all stages).
+// Values match NVN_SHADER_STAGE_* bitmask constants.
+typedef enum <ushort> G2SNVNSTAGEMASK {
+    StageMask_Global = 0x0000,    // Section A: global/shared constant data
+    StageMask_Vertex = 0x0001,    // Section B: NVN_SHADER_STAGE_VERTEX
+    StageMask_TessCtrl = 0x0002,  // Section C: NVN_SHADER_STAGE_TESS_CONTROL
+    StageMask_TessEval = 0x0004,  // Section D: NVN_SHADER_STAGE_TESS_EVALUATION
+    StageMask_Geometry = 0x0008,  // Section E: NVN_SHADER_STAGE_GEOMETRY
+    StageMask_Fragment = 0x0010,  // Section F: NVN_SHADER_STAGE_FRAGMENT
+    StageMask_Compute = 0x0020    // (Compute; would be a 7th section)
+} G2SNVNStageMask;
+
+// Pipeline stage index (0-5), used by FUN_71007D5CA0 to retrieve per-stage data.
+typedef enum <uint> G2SSHADERSTAGE {
+    Stage_Vertex = 0,
+    Stage_Fragment = 1,
+    Stage_Geometry = 2,
+    Stage_TessellationCtrl = 3,
+    Stage_TessellationEval = 4,
+    Stage_Compute = 5
+} G2SShaderStage;
+
+// Appears 6 times in the header, once per binding section (A-F).
+// When read as a 32-bit int the value is (nvnStageMask << 16) | shaderType.
+// The NX runtime validates this: it must be 0 (absent) or ShaderType_NX | stageMask.
+typedef struct G2SSHADERINFO {
+    G2SShaderType shaderType<name="Shader Platform Type", comment="0x58=NX (Switch NVN). DXBC (0x41) is rejected by this code path.">;
+    G2SNVNStageMask nvnStageMask<name="NVN Stage Mask", comment="NVN pipeline stage bitmask. As int: (nvnStageMask<<16)|shaderType must be 0 or 0xNN0058.">;
+} G2SShaderInfo;
+
+// Six "buffer section" counts (A–F) are multiplied by 8 at runtime to size
+// sections of the shader object's GPU descriptor handle buffer:
+//   sectionA_start = base
+//   sectionB_start = sectionA_start + bufferSectionA_Count * 8
+//   ...etc.
+// Each 8-byte entry is a 64-bit GPU resource handle (constant buffer / texture /
+// sampler / image). Sections A–B live here; C–F live in the extended header.
+//
+// The "binding groups" (paramDescriptor through unknown7) provide smaller
+// descriptor tables copied directly into the runtime shader object at fixed offsets.
+// Each group has a "primary" and optional "secondary" variant signalled by a pair
+// of bits in the runtime capability flags at object+0x238.
+//
+// File offsets (from _GS2 file start) are shown in the comment for each field.
+typedef struct G2SSTRUCTURE_COUNTBLOCK {
+    int fileFormatRevision<name="File Format Revision",
+         comment="Always 1 in observed files. file+0x44">;
+    int paramDescriptorCount<name="Param Descriptor Count",
+         comment="Count of G2SParamDescriptor (48-byte) entries. file+0x48. "
+                 "Runtime: first entry (48 bytes) copied to shader object +0x11C4.">;
+    int unknown3Count<name="Unknown 3 Count",
+         comment="Always 0 in observed files. file+0x4C. "
+                 "If non-zero: first 4 bytes copied to runtime object +0x11F4.">;
+    int uniformBlockCount<name="Uniform Block Count",
+         comment="Count of G2SGpuBufferBinding (16-byte) entries. file+0x50. "
+                 "Runtime: first entry -> {gpuAddress -> obj+0x11F8, range -> obj+0x1200}.">;
+    int unknown5Count<name="Unknown 5 Count",
+         comment="Count of G2SGpuAddressEntry (8-byte) entries. file+0x54. "
+                 "Runtime: first entry (8 bytes = 64-bit addr) -> shader object +0x1208.">;
+    int shaderResourceCount<name="Shader Resource Count",
+         comment="Count of G2SShaderResourceEntry (40-byte) entries. file+0x58. "
+                 "Runtime: first entry (40 bytes) copied to shader object +0x1210.">;
+    int unknown7Count<name="Unknown 7 Count",
+         comment="Count of G2SScalarEntry (4-byte) entries. file+0x5C. "
+                 "Runtime: first entry (4 bytes) -> shader object +0x1238. "
+                 "Likely compact sampler/texture pool indices.">;
+    int msaaVariantPresent<name="MSAA Variant Present Flag",
+         comment="Non-zero: shader has an MSAA variant. file+0x60. "
+                 "Gated together with msaaShadowDataSize for MSAA param allocation. "
+                 "If > 1: secondary MSAA variant also present.">;
+    int msaaShadowDataSize<name="MSAA Shadow Data Size (bytes)",
+         comment="Byte length of MSAA shadow param data block. file+0x64. "
+                 "Block located at msaaShadowDataPointer. Double-copied at runtime: "
+                 "-> obj[0x248] (copy 1) and obj[0x249] (copy 2, for double-buffering). "
+                 "Allocation = (size*2 + 15) & ~15 bytes.">;
+    int bufferSectionA_Count<name="Buffer Section A Count",
+         comment="GPU handle table entries (8 bytes each), shared/global stage. "
+                 "file+0x68 | nvnStageMask=0x0000 | shaderInfo_A">;
+    int bufferSectionB_Count<name="Buffer Section B Count",
+         comment="GPU handle table entries (8 bytes each), Vertex stage. "
+                 "file+0x6C | nvnStageMask=0x0001 | shaderInfo_B">;
+    int unknown11Count<name="Unknown 11 Count", comment="file+0x70">;
+} G2SStructureCountBlock;
+
+// All offsets are absolute from the start of the file.
+typedef struct G2SSTRUCTURE_POINTERS {
+    int fullNamePointer<name="Full Name Pointer",
+        comment="Absolute file offset of null-terminated full shader name (when > 32 bytes). file+0x74">;
+    int paramDescriptorPointer<name="Param Descriptor Pointer",
+        comment="Absolute file offset of paramDescriptorCount G2SParamDescriptor (48-byte) entries. file+0x78">;
+    int unknown3Pointer<name="Unknown 3 Pointer",
+        comment="Absolute file offset of unknown3 data. Always 0 (unknown3Count always 0). file+0x7C">;
+    int uniformBlockPointer<name="Uniform Block Pointer",
+        comment="Absolute file offset of uniformBlockCount G2SGpuBufferBinding (16-byte) entries. file+0x80">;
+    int unknown5Pointer<name="Unknown 5 Pointer",
+        comment="Absolute file offset of unknown5Count G2SGpuAddressEntry (8-byte) entries. file+0x84">;
+    int shaderResourcePointer<name="Shader Resource Pointer",
+        comment="Absolute file offset of shaderResourceCount G2SShaderResourceEntry (40-byte) entries. file+0x88">;
+    int unknown7Pointer<name="Unknown 7 Pointer",
+        comment="Absolute file offset of unknown7Count G2SScalarEntry (4-byte) entries. file+0x8C">;
+    int msaaShadowDataPointer<name="MSAA Shadow Data Pointer",
+        comment="Absolute file offset of MSAA shadow param data block (msaaShadowDataSize bytes). file+0x90. "
+                "Runtime: memcpy'd to obj[0x248] and obj[0x249] (two consecutive copies).">;
+    int shaderVariantTablePointer<name="Shader Variant Table Pointer",
+        comment="Absolute file offset of G2SShaderVariantEntry array. file+0x94. "
+                "Dimensions (each 0->1): paramDescriptorCount * max(unknown3Count,1) "
+                "* max(uniformBlockCount,1) * max(unknown5Count,1) "
+                "* max(shaderResourceCount,1) * max(unknown7Count,1) "
+                "* max(msaaVariantPresent,1). Entries are 16 bytes each.">;
+    int unknown10Pointer<name="Unknown 10 Pointer", comment="file+0x98">;
+    int unknown11Pointer<name="Unknown 11 Pointer", comment="file+0x9C">;
+    int shaderInfoBlockPointer<name="Shader Info Block Pointer",
+        comment="Points to per-stage shader binary info block (parsed by FUN_7100A68180). file+0xA0">;
+    int unknown12<name="Unknown 12", comment="file+0xA4">;
+    int unknown13<name="Unknown 13", comment="file+0xA8">;
+    int shaderBundleInfoPointer<name="Shader Bundle Info Pointer", comment="file+0xAC">;
+    int firstShaderPointer<name="First Shader Pointer",
+        comment="Points to first shader stage binary data. file+0xB0">;
+} G2SStructurePointerBlock;
+
+typedef struct G2SHEADER {
+    GResourceSectionHeader header<name="Resource Header", read=GetSectionName>;
+    short formatRevision<name="Format Revision", comment="Always 1">;
+    short alignment<name="Alignment", comment="Always 16">;
+    char shaderName[0x20]<name="Shader Name",
+        comment="Short name ≤32 chars; see pointers.fullNamePointer if longer.">;
+    char shaderVersion[4]<name="Shader Version", comment="Always '0000'">;
+
+    // Two ShaderInfo entries describing binding sections A (global) and B (VS).
+    // Read as int: must equal (nvnStageMask << 16)|0x58 for NX, or 0 if section absent.
+    G2SShaderInfo shaderInfo_SectionA<name="Shader Info - Section A (global)",
+        comment="nvnStageMask=0x0000 (shared). Expected int: 0x00000058">;
+    G2SShaderInfo shaderInfo_SectionB<name="Shader Info - Section B (Vertex)",
+        comment="nvnStageMask=0x0001. Expected int: 0x00010058 if VS present, else 0.">;
+
+    int always1<name="Always 1">;
+    short unknown4<name="Unknown 4">;
+    short unknown5<name="Unknown 5">;
+
+    G2SStructureCountBlock  counts<name="Section Counts">;
+    G2SStructurePointerBlock pointers<name="Section Pointers">;
+
+    short unknown6<name="Unknown 6">;
+    short unknown7<name="Unknown 7">;
+
+    // Three ShaderInfo entries for binding sections C (TCS), D (TES), E (GS).
+    // Positioned immediately before their respective buffer section counts.
+    G2SShaderInfo shaderInfo_SectionC<name="Shader Info - Section C (TessCtrl)",
+        comment="nvnStageMask=0x0002. Expected int: 0x00020058 if TCS present, else 0.">;
+    G2SShaderInfo shaderInfo_SectionD<name="Shader Info - Section D (TessEval)",
+        comment="nvnStageMask=0x0004. Expected int: 0x00040058 if TES present, else 0.">;
+    G2SShaderInfo shaderInfo_SectionE<name="Shader Info - Section E (Geometry)",
+        comment="nvnStageMask=0x0008. Expected int: 0x00080058 if GS present, else 0.">;
+
+    // Buffer section counts C–E (file+0xC4, 0xC8, 0xCC).
+    int bufferSectionC_Count<name="Buffer Section C Count",
+        comment="GPU handle entries, 8 bytes each. TessCtrl stage. file+0xC4">;
+    int bufferSectionD_Count<name="Buffer Section D Count",
+        comment="GPU handle entries, 8 bytes each. TessEval stage. file+0xC8">;
+    int bufferSectionE_Count<name="Buffer Section E Count",
+        comment="GPU handle entries, 8 bytes each. Geometry stage. file+0xCC">;
+
+    int unknownPointer1<name="Unknown Pointer 1">;
+    int unknownPointer2<name="Unknown Pointer 2">;
+    int unknownPointer3<name="Unknown Pointer 3">;
+
+    // ShaderInfo for section F (FS) - the only remaining stage for a typical shader.
+    G2SShaderInfo shaderInfo_SectionF<name="Shader Info - Section F (Fragment)",
+        comment="nvnStageMask=0x0010. Expected int: 0x00100058 if FS present, else 0.">;
+
+    // Buffer section count F (file+0xE0).
+    int bufferSectionF_Count<name="Buffer Section F Count",
+        comment="GPU handle entries, 8 bytes each. Fragment stage. file+0xE0">;
+
+    int unknownPointer4<name="Unknown Pointer 4">;
+    int padding[5]<name="Padding", comment="All 0xFF">;
+} G2SHeader;
+
+// 48-byte constant buffer layout descriptor.
+// Describes one named constant block. The runtime copies the first entry directly
+// into the shader object at +0x11C4.
+// If paramDescriptorCount > 1 a secondary variant also exists (shadow/depth pass).
+// Sub-parameters like fOccScaler, rmIndex, fPtn etc. are declared in these entries.
+// Exact field layout TBD (requires further decompile of FUN_7100A68BF0 callers).
+typedef struct G2SPARAMDESCRIPTOR {
+    int field_00<name="Field 00">;
+    int field_04<name="Field 04">;
+    int field_08<name="Field 08">;
+    int field_0C<name="Field 0C">;
+    int field_10<name="Field 10">;
+    int field_14<name="Field 14">;
+    int field_18<name="Field 18">;
+    int field_1C<name="Field 1C">;
+    int field_20<name="Field 20">;
+    int field_24<name="Field 24">;
+    int field_28<name="Field 28">;
+    int field_2C<name="Field 2C">;
+} G2SParamDescriptor;
+
+// Placeholder - never populated in observed _GS2 files (unknown3Count always 0).
+// If ever non-zero, first 4 bytes -> runtime shader object +0x11F4.
+typedef struct G2SUNKNOWNSTRUCTURE3 {
+} G2SUnknownStruct3;
+
+// 16-byte GPU buffer binding entry.
+// Two 64-bit fields per entry. Runtime copies first entry as:
+//   gpuAddress (8 bytes) -> shader object +0x11F8 (= obj[0x23F])
+//   bufferRange (8 bytes) -> shader object +0x1200 (= obj[0x240])
+// Likely: NVN constant buffer GPU address + byte range/size.
+typedef struct G2SGPUBUFFERBINDING {
+    uint64 gpuAddress<name="GPU Address",
+        comment="NVN constant/uniform buffer GPU address">;
+    uint64 bufferRange<name="Buffer Range",
+        comment="Buffer range in bytes, or end address">;
+} G2SGpuBufferBinding;
+
+// 8-byte GPU address entry.
+// Runtime copies first entry (8 bytes) -> shader object +0x1208 (= obj[0x241]).
+// Likely: a 64-bit GPU buffer address (texture pool, sampler pool, or similar).
+typedef struct G2SGPUADDRESSENTRY {
+    uint64 gpuAddress<name="GPU Address">;
+} G2SGpuAddressEntry;
+
+// 40-byte shader resource binding descriptor.
+// Runtime copies first entry (40 bytes) -> shader object +0x1210.
+// If shaderResourceCount > 1, a secondary (shadow/depth) variant exists.
+// Confirmed fields (FUN_7100500b20 reads from the copied data):
+//   shaderFlags (byte 0): bit5=has sSpMap stage, bits5+7 both set = extra stage count
+//   renderPassCount (int 4): number of named render passes ("sStage0", "sStage1", ...)
+typedef struct G2SSHADERRESOURCEENTRY {
+    uchar shaderFlags<name="Shader Flags",
+           comment="bit5=has sSpMap (shadow param map) stage, "
+                   "bits 5+7 both set = extra stage. Runtime obj+0x1210.">;
+    uchar padding0<name="Padding 0">;
+    uchar padding1<name="Padding 1">;
+    uchar padding2<name="Padding 2">;
+    int renderPassCount<name="Render Pass Count",
+           comment="Number of named render pass stages (sStage0..N). "
+                   "Runtime obj+0x1214.">;
+    uint64 field_08<name="Field 08">;
+    uint64 field_10<name="Field 10">;
+    uint64 field_18<name="Field 18">;
+    uint64 field_20<name="Field 20">;
+} G2SShaderResourceEntry;
+
+// 4-byte compact scalar entry.
+// Runtime copies first entry (4 bytes) -> shader object +0x1238 (= *(uint*)(obj+0x247)).
+// Likely: compact sampler index, texture pool index, or similar 32-bit binding handle.
+typedef struct G2SSCALARENTRY {
+    int value<name="Scalar Value">;
+} G2SScalarEntry;
+
+// 16-byte shader variant binary pointer entry.
+// Lives at shaderVariantTablePointer; one entry per combination of binding group variants.
+// The multi-dimensional array is indexed by:
+//   dim[0] = paramDescriptor variant (0..paramDescriptorCount-1)
+//   dim[1] = unknown3 variant        (0..max(unknown3Count,1)-1)
+//   dim[2] = uniformBlock variant    (0..max(uniformBlockCount,1)-1)
+//   dim[3] = unknown5 variant        (0..max(unknown5Count,1)-1)
+//   dim[4] = shaderResource variant  (0..max(shaderResourceCount,1)-1)
+//   dim[5] = unknown7 variant        (0..max(unknown7Count,1)-1)
+//   dim[6] = msaa variant            (0..max(msaaVariantPresent,1)-1)
+// Formula (strides computed by FUN_7100A68180):
+//   index = (...((dim[0]*S1 + dim[1])*S2 + dim[2])*S3 + ... + dim[6])
+//   where S1=max(unknown3Count,1), S2=max(uniformBlockCount,1), etc.
+// field_04 (confirmed): file offset to the compiled NVN binary package for this variant.
+// FUN_7100500b20 parses that binary package to fill the 16-slot stage pointer table
+// at runtime obj+0x110 with per-stage NVN binary section pointers.
+typedef struct G2SSHADERVARIANTENTRY {
+    int field_00<name="Field 00">;
+    uint shaderBinaryOffset<name="Shader Binary Offset",
+         comment="File offset to compiled NVN binary package for this variant. "
+                 "Package header: {ushort entry_count, ushort ?, "
+                 "entries stride 0xC: {short slot_index, ?, uint binary_offset}}.">;
+    int field_08<name="Field 08">;
+    int field_0C<name="Field 0C">;
+} G2SShaderVariantEntry;
+
+typedef struct G2SSTRUCTURE {
+    G2SHeader header<name="Header">;
+
+    if (header.pointers.fullNamePointer > 0) {
+        FSeek(header.pointers.fullNamePointer);
+        string fullName<name="Full Shader Name",
+            comment="Present when name > 32 bytes. May still be partially mangled.">;
+    }
+
+    if (header.counts.paramDescriptorCount > 0) {
+        FSeek(header.pointers.paramDescriptorPointer);
+        G2SParamDescriptor paramDescriptors[header.counts.paramDescriptorCount]
+            <name="Param Descriptors",
+             comment="Constant buffer layout descriptors. First entry copied to runtime obj+0x11C4.",
+             optimize=false>;
+    }
+
+    if (header.counts.unknown3Count > 0) {
+        FSeek(header.pointers.unknown3Pointer);
+        G2SUnknownStruct3 unknownStructure3[header.counts.unknown3Count]
+            <name="Unknown 3 (never seen non-zero)">;
+    }
+
+    if (header.counts.uniformBlockCount > 0) {
+        FSeek(header.pointers.uniformBlockPointer);
+        G2SGpuBufferBinding uniformBindings[header.counts.uniformBlockCount]
+            <name="GPU Buffer Bindings",
+             comment="Uniform/constant buffer GPU address+range pairs. First entry -> runtime obj+0x11F8.",
+             optimize=false>;
+    }
+
+    if (header.counts.unknown5Count > 0) {
+        FSeek(header.pointers.unknown5Pointer);
+        G2SGpuAddressEntry gpuAddressEntries[header.counts.unknown5Count]
+            <name="GPU Address Entries",
+             comment="64-bit GPU addresses. First entry -> runtime obj+0x1208.",
+             optimize=false>;
+    }
+
+    if (header.counts.shaderResourceCount > 0) {
+        FSeek(header.pointers.shaderResourcePointer);
+        G2SShaderResourceEntry shaderResources[header.counts.shaderResourceCount]
+            <name="Shader Resource Entries",
+             comment="Texture/sampler binding descriptors (40 bytes each). First entry -> runtime obj+0x1210.",
+             optimize=false>;
+    }
+
+    if (header.counts.unknown7Count > 0) {
+        FSeek(header.pointers.unknown7Pointer);
+        G2SScalarEntry scalarEntries[header.counts.unknown7Count]
+            <name="Scalar Entries",
+             comment="4-byte compact binding entries. First entry -> runtime obj+0x1238.",
+             optimize=false>;
+    }
+
+    // Shader variant table: one G2SShaderVariantEntry per variant combination.
+    // Total count = paramDescriptorCount * max(unknown3Count,1) * max(uniformBlockCount,1)
+    //             * max(unknown5Count,1) * max(shaderResourceCount,1)
+    //             * max(unknown7Count,1) * max(msaaVariantPresent,1)
+    local int s3Count = (header.counts.unknown3Count > 0) ? header.counts.unknown3Count : 1;
+    local int s4Count = (header.counts.uniformBlockCount > 0) ? header.counts.uniformBlockCount : 1;
+    local int s5Count = (header.counts.unknown5Count > 0) ? header.counts.unknown5Count : 1;
+    local int s6Count = (header.counts.shaderResourceCount > 0) ? header.counts.shaderResourceCount : 1;
+    local int s7Count = (header.counts.unknown7Count > 0) ? header.counts.unknown7Count : 1;
+    local int s8Count = (header.counts.msaaVariantPresent > 0) ? header.counts.msaaVariantPresent : 1;
+    local int variantTotal = header.counts.paramDescriptorCount
+                           * s3Count * s4Count * s5Count * s6Count * s7Count * s8Count;
+    if (header.counts.paramDescriptorCount > 0 && variantTotal > 0) {
+        FSeek(header.pointers.shaderVariantTablePointer);
+        G2SShaderVariantEntry shaderVariants[variantTotal]
+            <name="Shader Variant Table",
+             comment="16 bytes per variant combination. See G2SShaderVariantEntry for indexing formula.",
+             optimize=false>;
+    }
+
+    if (header.counts.msaaShadowDataSize > 0 && header.counts.msaaVariantPresent > 0) {
+        FSeek(header.pointers.msaaShadowDataPointer);
+        uchar msaaShadowData[header.counts.msaaShadowDataSize]
+            <name="MSAA Shadow Param Data",
+             comment="Raw MSAA shadow map parameter block. Double-copied at runtime: "
+                     "-> obj[0x248] (primary) and obj[0x249] (secondary, frame-lagged).">;
+    }
+} G2SStructure;
+
+G2SStructure File<name="G2S Shader", open=true>;

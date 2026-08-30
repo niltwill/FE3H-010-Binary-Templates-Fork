@@ -1,0 +1,414 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.1 Template File
+//
+//      File: saveSystem.bt
+//   Authors: Falo, niltwill
+//   Purpose: Fire Emblem: Three Houses "system" save file
+//   Version: 1.0
+//
+//   Layout: [12-byte header] [SaveFileInfo x37] [GlobalFlags 0x134 bytes]
+//   Sizes: V5 (v1.0.x) = 0x44C |  V7 (v1.1.0+) = 0x1204
+//
+//   CHECKSUM: Byte sum of file bytes [0xC..EOF), stored as u32 at offset 0.
+//             system file -> 32-bit sum (sum & 0xFFFFFFFF)
+//             slot files -> 8-bit sum (sum & 0x000000FF)
+//   SCRIPTS (run these before opening the template to fix checksum first):
+//     SaveSystem_UpdateChecksum-RunTemplate.1sc -> system file (32-bit, calls saveSystem.bt)
+//     SaveEntry_UpdateChecksum-RunTemplate.1sc -> slot files (8-bit, calls saveEntry.bt)
+//
+//   SLOT FILES (associated save data):
+//     Slot[0]     -> "auto"             main game autosave
+//     Slot[1-25]  -> "slot00"-"slot24"  main game player saves (25 slots)
+//     Slot[26]    -> "abyss00"          DLC player save 1
+//     Slot[27]    -> "abyss01"          DLC player save 2
+//     Slot[28]    -> "abyss02"          DLC player save 3
+//     Slot[29]    -> "ex00"             DLC autosave
+//     Slot[30-36] -> (unused/reserved)
+//------------------------------------------------
+
+LittleEndian();
+
+// Globals
+local int g_Version = 0;
+local int g_IsV7 = 0;
+local int g_SlotCount = 0;
+
+// Enums
+typedef enum <uint32> {
+    SaveVer_5_v100_v102 = 5,  // 7 slots, Flags 0x114 bytes
+    SaveVer_7_v110_v120 = 7   // 37 slots, Flags 0x134 bytes
+} SaveVersion_e;
+
+// Save slot display state.
+// This drives the location string and save screen behaviour.
+// State 17 (0x11) = INVALID = empty slot sentinel.
+// States 12-16 and 18+ = INVALID (game shows "corrupted save" message).
+typedef enum <uint32> {
+    BaseOps_Exploration = 0,           // Base of Operations (default - monastery exploration)
+    INVALID = 1,                       // INVALID - game shows corrupted save error
+    Preparations_AfterEV = 2,          // Preparations (the same battle prep screen for battles after its associated cutscene/EV finishes)
+                                        // Don't use this when editing saves: use state 4 instead (using this directly may make the battle not load everything correctly!)
+                                        // Then make the save after you go through the event/cutscene and reach the battle prep screen
+    NewChapter = 3,                    // New Chapter (narrator/cinematic screen)
+    BeforeBattle = 4,                  // Before Battle (loads what is set to happen before the scenario - use this over state 2)
+    AfterBattle = 5,                   // After Battle (calendar progressing)
+    BaseOps_Exploration2 = 6,          // Base of Operations (monastery exploration) - not sure about difference between 0 and 6
+    BaseOps_Calendar = 7,              // Base of Operations (Byleth at calendar menu)
+    Abyss = 8,                         // Abyss exploration (falls back to monastery if Abyss not unlocked)
+    EmptyString = 9,                   // No strings displayed; monastery fallback (probably unused)
+    SelectBattlefield = 10,            // Select Battlefield screen
+    ClearedGameData_NGPlus = 11,       // Cleared-Game Data (NG+ state - shows star icon on slot header)
+    EmptySlot_Sentinel = 17            // 0x11 = empty slot (unused state)
+                                       // 12-16, 18+ = INVALID (corrupted save message, do not use)
+} SaveState_e;
+
+// RouteID / banner flag.
+// Interpretation depends on ChapterNum (Part I vs Part II):
+//   ChapterNum 0-12  = Part I  (pre-timeskip)
+//   ChapterNum 13-22 = Part II (post-timeskip)
+//
+// Pre-timeskip:                   Post-timeskip:
+//   0 = Black Eagles                0 = Silver Snow
+//   1 = Blue Lions                  1 = Azure Moon
+//   2 = Golden Deer                 2 = Verdant Wind
+//   3 = Black Eagles (alt?)         3 = Crimson Flower
+//   4 = Silver Snow / Church        4 = Silver Snow (pre-TS variant, stays accessible)
+//   5 = Cindered Shadows (DLC)      5 = Cindered Shadows (DLC)
+//   6+ = No flag (fallback)         6+ = Crimson Flower (no icon, default fallback)
+// Default / Prologue = 4 (Church of Seiros affiliation; Jeralt's faction)
+typedef enum <uint32> {
+    RouteID_0 = 0,
+    RouteID_1 = 1,
+    RouteID_2 = 2,
+    RouteID_3 = 3,
+    RouteID_4_Default_Church = 4,
+    RouteID_5_CinderedShadows = 5
+    // 6+ = no flag / fallback
+} RouteID_e;
+
+// Scenario (battle map) associated with this save.
+// Determines which map loads when you enter the battle from this save.
+// 255 = No_Scenario (no battle pending).
+typedef enum <uint32> {
+    Scenario_Prologue = 0,
+    Scenario_Ch1_3Houses = 1,
+    Scenario_Ch2_Zanado = 2,
+    Scenario_Ch3_MagredAmbush = 3,
+    Scenario_Ch4_HolyMausoleum = 4,
+    Scenario_Ch5_TowerOfBlackWind = 5,
+    Scenario_Ch6_UndergroundChamber = 6,
+    Scenario_Ch7_Gronder1 = 7,
+    Scenario_Ch8_RemireVillage = 8,
+    Scenario_Ch9_ChapelOutskirts = 9,
+    Scenario_Ch10_MonicaForest = 10,
+    Scenario_Ch11_HolyTomb = 11,
+    Scenario_Ch12_ToWar = 12,
+    Scenario_Ch13_HuntingByDaybreak = 13,
+    Scenario_Ch14_ProtectingGarregMach = 14,
+    Scenario_Ch15_AmbushAtAilell = 15,
+    Scenario_Ch16_GreatBridgeCoup = 16,
+    Scenario_Ch17_Gronder2 = 17,
+    Scenario_Ch17_Unused = 18,
+    Scenario_VWCh18_Unused = 19,
+    Scenario_VWCh18_FortMerceus = 20,
+    Scenario_AMCh18_Fhirdiad = 21,
+    Scenario_VWCh19_Enbarr = 22,
+    Scenario_AMCh19_SavingDerdriu = 23,
+    Scenario_VWCh20_ConfrontationAtPalace = 24,
+    Scenario_AMCh20_FortMerceus = 25,
+    Scenario_VWCh21_Shambhala = 26,
+    Scenario_AMCh21_Enbarr = 27,
+    Scenario_SSCh21_TheFinalBattle = 28,  // Referenced as Ch.22
+    Scenario_VWCh22_VWFinal = 29,
+    Scenario_AMCh22_ClashAtImperialCapital = 30,
+    Scenario_CFCh12_BattleOfGarregMach = 31,
+    Scenario_CFCh13_GreatBridgeCoup = 32,
+    Scenario_CFCh14_CapturingDerdriu = 33,
+    Scenario_CFCh15_ProtectingGarregMach = 34,
+    Scenario_CFCh16_Arianrhod = 35,
+    Scenario_CFCh17_TailteanPlains = 36,
+    Scenario_CFCh18_FightForFhirdiad = 37,
+    Scenario_RheaParalogue = 38,
+    Scenario_DimitriParalogue = 39,
+    Scenario_EdelgardParalogue = 40,
+    Scenario_ClaudeParalogue = 41,
+    Scenario_SothisParalogue = 42,
+    Scenario_DedueParalogue = 43,
+    Scenario_FelixParalogue = 44,
+    Scenario_AsheParalogue = 45,
+    Scenario_SylvainParalogue = 46,
+    Scenario_MercedesParalogue = 47,
+    Scenario_AnnetteParalogue = 48,
+    Scenario_IngridParalogue = 49,
+    Scenario_HubertParalogue = 50,
+    Scenario_LysitheaParalogue = 51,
+    Scenario_LeonieParalogue = 52,
+    Scenario_PetraParalogue = 53,
+    Scenario_LorenzParalogue = 54,
+    Scenario_IgnatzParalogue = 55,
+    Scenario_MarianneParalogue = 56,
+    Scenario_HildaParalogue = 57,
+    Scenario_SetethParalogue = 58,
+    Scenario_ManuelaParalogue = 59,
+    Scenario_AloisParalogue = 60,
+    Scenario_Aux_Outskirts = 61,
+    Scenario_Aux_Mountains = 62,
+    Scenario_Aux_Empire = 63,
+    Scenario_Aux_Kingdom = 64,
+    Scenario_Aux_Desert = 65,
+    Scenario_Aux_Magred = 66,
+    Scenario_Aux_Almyra = 67,
+    Scenario_Aux_Plateau = 68,
+    Scenario_Aux_Magred2 = 69,
+    Scenario_Aux_Mountain2 = 70,
+    Scenario_Aux_Desert2 = 71,
+    Scenario_Aux_Gronder = 72,
+    Scenario_Aux_Gronder2 = 73,
+    Scenario_Aux_Chapel = 74,
+    Scenario_Aux_Chapel2 = 75,
+    Scenario_Aux_Canyon = 76,
+    Scenario_Aux_Coast = 77,
+    Scenario_Aux_Plateau2 = 78,
+    Scenario_Aux_Ailell = 79,
+    Scenario_Aux_Plains = 80,
+    Scenario_Aux_Lake = 81,
+    Scenario_Aux_Forest = 82,
+    Scenario_Aux_Alliance = 83,
+    Scenario_Aux_Forest2 = 84,
+    Scenario_Aux_Tower = 85,
+    Scenario_CSCh1 = 86,
+    Scenario_CSCh2 = 87,
+    Scenario_CSCh3 = 88,
+    Scenario_CSCh4 = 89,
+    Scenario_CSCh5 = 90,
+    Scenario_CSCh6 = 91,
+    Scenario_CSCh7 = 92,
+    Scenario_HapiParalogue = 93,
+    Scenario_YuriParalogue = 94,
+    Scenario_Dummy95 = 95,
+    Scenario_Dummy96 = 96,
+    Scenario_AnnaParalogue = 97,
+    Scenario_JeritzaSemilogue = 98,
+    Scenario_Dummy99 = 99,
+    Scenario_None = 255
+} ScenarioNum_e;
+
+typedef enum <uint32> {
+    Day_NoSave = 0,
+    Day_1 = 1,
+    Day_2 = 2,
+    Day_3 = 3,
+    Day_4 = 4,
+    Day_5 = 5,
+    Day_6 = 6,
+    Day_7 = 7,
+    Day_8 = 8,
+    Day_9 = 9,
+    Day_10 = 10,
+    Day_11 = 11,
+    Day_12 = 12,
+    Day_13 = 13,
+    Day_14 = 14,
+    Day_15 = 15,
+    Day_16 = 16,
+    Day_17 = 17,
+    Day_18 = 18,
+    Day_19 = 19,
+    Day_20 = 20,
+    Day_21 = 21,
+    Day_22 = 22,
+    Day_23 = 23,
+    Day_24 = 24,
+    Day_25 = 25,
+    Day_26 = 26,
+    Day_27 = 27,
+    Day_28 = 28,
+    Day_29 = 29,
+    Day_30 = 30,
+    Day_31 = 31,
+    Day_None = 255
+} DayNum_e;
+
+// Display helpers
+
+string FmtPlaytime(uint32 s) {
+    return Str("%03d:%02d", s / 3600, (s % 3600) / 60);
+}
+
+// Decodes FE3H name-escape encoding: 1B 4E 30 [name] 1B 4E 31
+// ASCII only; non-ASCII bytes (Japanese etc.) appear as '?'
+string DecodeName(byte b[40]) {
+    local string r = "";
+    local int i, inside = 0;
+    for (i = 0; i < 38; i++) {
+        if (!inside && b[i]==0x1B && b[i+1]==0x4E && b[i+2]==0x30) {
+            inside = 1; i += 2;
+        } else if (inside && b[i]==0x1B && b[i+1]==0x4E && b[i+2]==0x31) {
+            break;
+        } else if (inside) {
+            r += (b[i] >= 0x20 && b[i] < 0x7F) ? Str("%c", b[i]) : "?";
+        }
+    }
+    return (r == "") ? "(encoded)" : r;
+}
+
+// Tree label shown next to each slot in the template view
+string FmtSlot(struct SaveFileInfo &s) {
+    if ((uint32)s.State == 17) return "[ Empty ]";
+    local string n = DecodeName(s.PlayerName);
+    local string t = FmtPlaytime(s.Playtime);
+    local string tag;
+    if ((uint32)s.RouteID == 5)
+        tag = "DLC";
+    else
+        tag = ((uint32)s.ChapterNum < 13) ? "PartI" : "PartII";
+    return Str("[%s] %s Ch.%d | State=%s | %s", n, tag, (uint32)s.ChapterNum, EnumToString(s.State), t);
+}
+
+// SaveFileInfo (0x74 bytes per slot)
+typedef struct {
+
+    // State (drives the save menu display)
+    // State 17 (0x11) = empty slot sentinel  (INVALID state, not a real state)
+    // States 12-16 and 18+ also invalid; game shows "corrupted save" for those too.
+    SaveState_e State <bgcolor=0xC0D8FF, comment="Save display state. 17(0x11)=empty slot. 12+ invalid.">;
+
+    // Playtime
+    uint32 Playtime <bgcolor=0xC8FFC8, read=FmtPlaytime, comment="Seconds elapsed. Display = HHH:MM.">;
+
+    // Route / banner flag
+    // Dual-encoding: interpretation depends on ChapterNum (Part I vs II).
+    // Pre-TS (Ch0-12): 0=BE,1=BL,2=GD,3=BE(alt),4=Church/SS,5=CS,6+=no flag
+    // Post-TS (Ch13+): 0=SS,1=AM,2=VW,3=CF, 4=SS(pre-TS),5=CS,6+=CF fallback
+    // Default/Prologue = 4 (Church of Seiros / Jeralt's affiliation)
+    uint32 RouteID <bgcolor=0xFFE8A0, comment="Route/banner. Pre-TS: 0=BE,1=BL,2=GD,4=Church. Post-TS: 0=SS,1=AM,2=VW,3=CF,4=SS(preTS). 5=DLC. 6+=fallback.">;
+
+    // Chapter number
+    // 0-22 for base game. 1-7 for DLC (Cindered Shadows = 7 chapters).
+    // Part I = Ch0-12. Part II = Ch13+.
+    // Also sets the background thumbnail.
+    uint32 ChapterNum <bgcolor=0xFFE8A0, comment="Chapter index 0-22 (base) / 1-7 (DLC). Ch0-12=Part I, Ch13+=Part II. Drives 'Ch.N' display and (with ScenarioNum) background image.">;
+
+    // Calendar day
+    // Day-of-month at time of save. 255 = No_Day (not in a monastery phase).
+    // Month is not stored here - derived from chapter timeline.
+    // Only displayed in the UI when State = 0/6/7 (monastery exploration).
+    DayNum_e Day <comment="Calendar day-of-month. 255=No_Day (Before Battle / Cleared-Game etc.). Month implicit from chapter.">;
+
+    // Padding
+    // Always 0 in observed saves. Probably alignment padding.
+    uint32 padding <comment="Always 0. Padding.">;
+
+    // Scenario (battle map)
+    // Identifies which specific battle map loads when entering combat.
+    // 255 = No_Scenario. For pre-timeskip chapters, value == ChapterNum.
+    // Post-timeskip scenarios diverge per-route (see ScenarioNum_e enum).
+    ScenarioNum_e ScenarioNum <bgcolor=0xFFE8A0, comment="Which battle map to use. Controls background image. 255=No_Scenario.">;
+
+    // Chapter-progression boolean flags (assumed)
+    // All are 0 or 1 (boolean u32). Best-guess semantics:
+    // unkFlag1: set=1 when State=3 (New Chapter). Hypothesis: SavedAtChapterInit.
+    // unkFlag2: always 1 (both base game and DLC). Hypothesis: SavedDuringChapter.
+    // unkFlag3: unknown when 1 (could be unused, if never set to 1 anywhere).
+    // unkFlag4: unknown when 1 (could be unused, if never set to 1 anywhere).
+    uint32 unkFlag1 <comment="Bool. Set=1 when State=3 (NewChapter). Hypothesis: SavedAtChapterInit.">;
+    uint32 unkFlag2 <comment="Bool. Always=1 (base+DLC). Hypothesis: SavedDuringChapter.">;
+    uint32 unkFlag3 <comment="Bool. Condition for =1 unknown.">;
+    uint32 unkFlag4 <comment="Bool. Condition for =1 unknown.">;
+
+    // Byleth name
+    byte PlayerName[40] <bgcolor=0xFFFFB0, comment="Byleth name. Escape-wrapped: 1B 4E 30 [name bytes] 1B 4E 31. 40 bytes max.">;
+
+    // Constant save-format sentinel
+    // Always 0x00000097 (= 151). The game reads this to verify the entry is a
+    // valid/recognised save entry. Never changes; do not edit.
+    uint32 saveEntryVal <comment="Constant = 0x97 (151). Save entry format sentinel. Always 97 00 00 00.">;
+
+    // Constant save-format version
+    // Always 0x01000004 (bytes: 01 00 00 04). Encodes format version "1.0.0.4"
+    // (the fourth revision of save format v1.0.0). Never changes; do not edit.
+    uint32 saveEntryVer <comment="Constant = 0x01000004. Format version stamp '1.0.0.4'. Always 01 00 00 04.">;
+
+    // Remaining unknown fields
+    uint32 reserved_1 <comment="Probably just empty padding (for reserved space).">;
+    uint32 reserved_2 <comment="Probably just empty padding (for reserved space).">;
+    uint32 reserved_3 <comment="Probably just empty padding (for reserved space).">;
+    uint32 reserved_4 <comment="Probably just empty padding (for reserved space).">;
+    uint32 reserved_5 <comment="Probably just empty padding (for reserved space).">;
+    uint32 reserved_6 <comment="Probably just empty padding (for reserved space).">;
+
+} SaveFileInfo <read=FmtSlot, optimize=false>;
+
+// Global flags (0x114 bytes V5 / 0x134 bytes V7)
+//
+//  Confirmed layout (from binary analysis of fresh DLC-only system file):
+//
+//  [0]       SystemByte        1 B  | bit 0 = first-boot/init flag
+//  [1-13]    MovieFlags       13 B  | bits 8-107 = 100 cutscene viewed flags
+//  [14-212]  GameplayFlags   199 B  | bits 112-1703, unknown content flags
+//  [213]     DLC_AckByte       1 B  | bit 6 (0x40) = DLC ownership acknowledged
+//  [214-268] UnknownFlags2    55 B  | bits 1712-2151, unknown
+//  [269-275] DLC_Unlock_V5     7 B  | bits 2152-2207 (also in V5), set 0xFF x7
+//  [276-305] DLC_Unlock_V7    30 B  | bits 2208-2447 (V7 only), set 0xFF x30
+//  [306-307] V7_Padding        2 B  | bits 2448-2463, unused (zero)
+//
+//  To unlock all DLC: set DLC_Unlock_V5 = 0xFF x7 AND DLC_Unlock_V7 = 0xFF x30.
+
+typedef struct {
+    byte SystemByte <bgcolor=0xE0E8FF, comment="Bit 0 (0x01) = global init / first-boot flag. Set on startup.">;
+    byte MovieFlags[13] <bgcolor=0xE0E8FF, comment="Bits 8-107: 100 cutscene unlock flags. Bit i = movie (msgbin 12823+(i-8)) viewed. All zero on fresh file.">;
+    byte GameplayFlags[199] <bgcolor=0xD0ECFF, comment="Bits 112-1703: 1592 unknown gameplay flags. Zero on fresh file. Map via gameplay testing.">;
+    byte DLC_AckByte <bgcolor=0xFFD090, comment="Bit 6 (0x40) = DLC ownership acknowledged (set in fresh DLC file). Other bits unknown.">;
+    byte UnknownFlags2[55] <bgcolor=0xD0ECFF, comment="Bits 1712-2151: 440 unknown flags. Zero on fresh file.">;
+    byte DLC_Unlock_V5[7] <bgcolor=0xFF9840, comment="Bits 2152-2207: base DLC unlock flags (also present in V5). Set all to 0xFF to unlock.">;
+    if (g_IsV7) {
+        byte DLC_Unlock_V7[30] <bgcolor=0xFF7820, comment="Bits 2208-2447: 240 Cindered Shadows DLC unlock flags (V7 only). Set all to 0xFF = full DLC unlock.">;
+        byte V7_Padding[2] <bgcolor=0xF0F0F0, comment="Bits 2448-2463: unused tail bytes in V7 flags. Zero.">;
+    }
+} SystemFlags <bgcolor=0xE8FFE8>;
+
+// Checksum verification
+local uint32 stored_csum = ReadUInt(0);
+local uint32 calc_csum = 0;
+local uint32 ci;
+for (ci = 0xC; ci < FileSize(); ci++)
+    calc_csum += ReadUByte(ci);
+
+if (stored_csum != calc_csum) {
+    Printf("!!! CHECKSUM MISMATCH: stored=0x%08X  computed=0x%08X !!!\n",
+           stored_csum, calc_csum);
+    Printf("    Run SaveEntry_UpdateChecksum.1sc before loading or save will be rejected.\n");
+} else {
+    Printf("Checksum OK: 0x%08X\n", stored_csum);
+}
+
+// File header
+typedef struct {
+    uint32 Checksum <bgcolor=0xC0D8FF, comment="32-bit byte sum of [0xC..EOF). system file uses 32-bit; slot files use 8-bit (& 0xFF). Make sure to recompute after any edits.">;
+    SaveVersion_e SaveVersion <bgcolor=0xC0D8FF, comment="5=v1.0.0-v1.0.2 (7 slots), 7=v1.1.0-v1.2.0 (37 slots)">;
+    uint32 SizeOfFile <bgcolor=0xC0D8FF, comment="Total file size in bytes">;
+} FileHeader;
+
+FileHeader Header;
+
+g_Version = (int)Header.SaveVersion;
+g_IsV7 = (g_Version >= 7) ? 1 : 0;
+g_SlotCount = g_IsV7 ? 37 : 7;
+
+Printf("Version=%d | Slots=%d | V7=%d\n", g_Version, g_SlotCount, g_IsV7);
+
+local uint32 expected = (g_IsV7 ? 0x11F8 : 0x440) + 0xC;
+if (FileSize() != expected)
+    Printf("WARNING: file size 0x%X != expected 0x%X\n", FileSize(), expected);
+
+// Slot entries
+local int si;
+for (si = 0; si < g_SlotCount; si++)
+    SaveFileInfo Slot;
+
+// Global flags
+SystemFlags Flags;
+
+// Final check
+Printf("Done. Position 0x%X / 0x%X | %s\n", FTell(), FileSize(),
+       (FTell()==FileSize()) ? "OK" : "WARNING: bytes unaccounted for!");

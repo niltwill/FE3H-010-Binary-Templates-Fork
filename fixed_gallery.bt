@@ -1,0 +1,98 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.1 Binary Template
+//
+//      File: fixed_gallery.bt
+//   Authors: niltwill
+//   Version: 1.1
+//   Purpose: FE3H fixed_gallery.bin - Art gallery image manifest and display ordering
+//  Category: Game Data
+// File Mask: fixed_gallery.bin
+//   History:
+//     1.0 - Initial RE from binary analysis
+//     1.1 - All code connections confirmed via Ghidra RE
+//------------------------------------------------
+
+// "fixed_gallery.bin" is for the image gallery browser (character art cards, event CG illustrations, paired ending art).
+// It is separate from the event gallery.
+
+LittleEndian();
+
+typedef struct {
+    uint32 section_count <name="Section Count", comment="Always 3">;
+    uint32 header_size <name="Header Size", comment="Always 0x1C (28 bytes)">;
+    uint32 sec0_data_size <name="Sec0 Data Size", comment="0x1120 = sub-header(0x40) + 432*10">;
+    uint32 sec1_abs_start <name="Sec1 Abs Offset", comment="0x113C. No alignment gap between sec0 and sec1.">;
+    uint32 sec1_data_size <name="Sec1 Data Size", comment="0x013A = sub-header(0x40) + 250*1">;
+    uint32 sec2_abs_start <name="Sec2 Abs Offset", comment="0x1278">;
+    uint32 sec2_data_size <name="Sec2 Data Size", comment="0x005F = sub-header(0x40) + 31*1. sec2_abs_start + sec2_data_size = EOF.">;
+} GlobalHeader <name="Global Header", bgcolor=cLtGray>;
+
+typedef struct {
+    uint32 magic <name="Magic", format=hex, comment="Always 0x16121900">;
+    uint32 entry_count <name="Entry Count">;
+    uint32 entry_stride <name="Entry Stride", format=hex>;
+    byte padding[52] <name="Padding", hidden=true, comment="Always zero">;
+} SubHdr <name="Sub-Header", bgcolor=cLtYellow>;
+
+// Gallery Item
+// 432 slots total; 299 active (at least one non-zero flag).
+// image_id is the image enum used across the EVScript card display system
+// Usually image_id = array_index (self-referential, canonical entry).
+// Exceptions:
+// - Entries 100-143: image_id = index-1 (CS DLC inserted at slot 99, shifted)
+// - Entries 326-359: all image_id=326 (reserved/blank block)
+// - Entry 144: image_id -> 159 (all-route CG header points forward)
+typedef struct {
+    uint16 image_id <name="Image Enum ID", comment="Image enum ID for this gallery slot. Equals array_index for canonical entries.">;
+    ubyte is_fullscreen <name="Is Fullscreen CG", comment="0 = thumbnail/portrait card. 1 = fullscreen CG (event or ending).">;
+    ubyte avail_silver_snow <name="Avail: Silver Snow", comment="1 = unlocked in Silver Snow route. When set alone with avail_crimson_flower (not AM/VW), this is the shared SS+CF portrait (character has no separate AM/VW art variant).">;
+    ubyte avail_azure_moon <name="Avail: Azure Moon", comment="1 = unlocked in Azure Moon route. Used alone for route-specific portrait variants.">;
+    ubyte avail_verdant_wind <name="Avail: Verdant Wind", comment="1 = unlocked in Verdant Wind route. Used alone for route-specific portrait variants.">;
+    ubyte avail_crimson_flower <name="Avail: Crimson Flower", comment="1 = unlocked in Crimson Flower route.">;
+    ubyte pad_b7 <name="Padding B7", hidden=true, comment="Always 0.">;
+    ubyte is_paired_ending <name="Is Paired Ending Illustration", comment="1 = character paired ending illustration (entries 360-388, IDs 341-369).">;
+    ubyte pad_b9 <name="Padding B9", hidden=true, comment="Always 0.">;
+} GalleryItem <name="Gallery Item", size=10, bgcolor=cLtBlue>;
+
+// Art Card Browse Order
+// Defines display order for the character art card gallery browser.
+// 0xFF = end-of-list sentinel for unused slots.
+typedef struct {
+    ubyte index <name="Section 0 Index", comment="Index into section 0 entry to display at this browser position. Range 0-175. 0xFF = unused/end sentinel.">;
+} BrowseOrderEntry <name="Browse Entry", size=1, bgcolor=cLtGreen>;
+
+// Ending Illustration Browse Order
+// Defines display order for the 'Byleth's partner' ending illustration viewer (shown after chapter clear and in the gallery browser).
+// Each value is an ordinal index into the 30 paired ending illustration set (not a char_id; not a section 0 index directly).
+// Display order:
+// [0] = 29 = Sothis/divine ending (special, shown first)
+// [1..13] = 0-12 (standard paired endings in canonical order)
+// [14,15] = 15,14 (Ashe and Dorothea swapped for display)
+// [16,17] = 17,16 (Annette and Gilbert swapped)
+// [18..23] = 18-22, 46 (46 = CF-specific Edelgard alias)
+// [24..29] = 23-27
+// [30] = 0xFF (end sentinel)
+typedef struct {
+    ubyte index <name="Ending Illustration Index", comment="Ordinal into the 30 paired ending illustrations: 0-28=standard pairings, 29=Sothis/divine, 46=CF-specific Edelgard alias. 0xFF = end sentinel.">;
+} EndingOrderEntry <name="Ending Entry", size=1, bgcolor=cLtPurple>;
+
+typedef struct {
+    SubHdr sub_hdr;
+    GalleryItem items[sub_hdr.entry_count] <name="Gallery Items", optimize=false>;
+} Sec0 <name="Section 0 - Gallery Item Manifest">;
+
+typedef struct {
+    SubHdr sub_hdr;
+    BrowseOrderEntry order[sub_hdr.entry_count] <name="Browse Order", optimize=true>;
+} Sec1 <name="Section 1 - Art Card Browse Order">;
+
+typedef struct {
+    SubHdr sub_hdr;
+    EndingOrderEntry order[sub_hdr.entry_count] <name="Ending Order", optimize=true>;
+} Sec2 <name="Section 2 - Ending Illustration Browse Order">;
+
+// No alignment gaps between sections here
+GlobalHeader hdr;
+FSeek(hdr.header_size); Sec0 sec0;
+FSeek(hdr.sec1_abs_start); Sec1 sec1;
+FSeek(hdr.sec2_abs_start); Sec2 sec2;

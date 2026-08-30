@@ -1,0 +1,153 @@
+//------------------------------------------------
+//--- 010 Editor v14.0 Binary Template
+//
+//      File: MonasterySpawnData_bai.bt
+//   Authors: TildeHat, niltwill
+//   Version: 2.0
+//   Purpose: Monastery BAI entity placement files
+//  Category: FE3H
+// File Mask: common/scenario/castle/*.bai (255-363 + DLC BAIs)
+//  ID Bytes:
+//   History:
+//   2.00    Aug 2026: Full RE of format.
+//   1.00    2019-09-02  DeathChaos - Start
+//------------------------------------------------
+
+#include "Enum/MonasteryNameID_enum.bt" // only used here, don't add to global enums
+#include "Structs.bt"
+
+LittleEndian();
+
+// Enums
+typedef enum <ubyte> {
+    RightSlightlyUp = 0,
+    UpSlightlyRight = 1,
+    Up = 2,
+    UpLeft = 3,
+    Left = 4,
+    DownLeft = 5,
+    Down = 6,
+    DownRight = 7
+} Rotation;
+
+typedef enum <ubyte> {
+    RecordType_Valid0 = 0,
+    RecordType_Valid1 = 1,
+    RecordType_Valid2 = 2,
+    RecordType_Valid3 = 3,
+    RecordType_EndOfList = 4   // any value > 3 terminates iteration
+} RecordType;
+
+typedef enum <ubyte> {
+    Behavior_Static = 0,
+    Behavior_SpecialNPC = 1,
+    Behavior_Patrol_A = 2,
+    Behavior_Patrol_B = 3,
+    Behavior_WaypointEnd = 7
+} BehaviorType;
+
+typedef enum <ubyte> {
+    MoveMode_Static = 0,
+    MoveMode_WalkToInteract = 1,
+    MoveMode_Patrol = 2
+} MoveMode;
+
+typedef enum <ubyte> {
+    WaypointFlag_Continue = 0,
+    WaypointFlag_Turn = 1,
+    WaypointFlag_Reverse = 4
+} WaypointFlags;
+
+typedef struct {
+    MonasteryNameID char_id <comment="Character spawned at this slot">;
+    ushort padding <comment="Always 0 for real records">;
+    float spawn_x <comment="World X position (local; add scene_center)">;
+    float spawn_z <comment="World Z position (local; add scene_center)">;
+    Rotation facing_dir <comment="Initial facing direction 0-7">;
+    RecordType record_type <comment=">3 = END OF LIST terminator">;
+    ubyte unavailable_flag <comment="!=0: entity+0xD2 bit4 set (hidden)">;
+    BehaviorType behavior_type <comment="AI mode; 7=WaypointEnd for patrol path nodes">;
+    ubyte patrol_angle <comment="Movement heading 0-255 (maps to 0-360°)">;
+    ubyte unk_0x14C;
+    WaypointFlags waypoint_flags <comment="0=continue 1=turn 4=reverse">;
+    ubyte unk_0x14E;
+    MoveMode move_mode <comment="0=Static 1=WalkToInteract 2=Patrol">;
+    ubyte unk_D2_bit5 <comment="!=0: entity+0xD2 bit5 set">;
+    ubyte loop_flag <comment="1=loop patrol path">;
+    ubyte unk_0x150;
+} sEntityRecord <read=EntityRecordRead, size=24>;
+
+string EntityRecordRead(sEntityRecord &r) {
+    local string s;
+    if (r.record_type > 3)
+        return "*** END OF LIST ***";
+    local string bname;
+    switch (r.behavior_type) {
+        case 0: bname = "Static"; break;
+        case 1: bname = "SpecialNPC"; break;
+        case 2: bname = "Patrol_A"; break;
+        case 3: bname = "Patrol_B"; break;
+        case 7: bname = "WaypointEnd"; break;
+        default: SPrintf(bname, "?%d", r.behavior_type); break;
+    }
+    SPrintf(s, "char=%d (%6.0f,%6.0f ) %s", r.char_id, r.spawn_x, r.spawn_z, bname);
+    if (r.unavailable_flag) s += " [HIDDEN]";
+    return s;
+}
+
+typedef struct {
+    ubyte warp_dest_A <comment="WarpDest_Table index for nearest pathfinding node A (file18 Sec1); <88=BAI entity ref, >=88=grid node">;
+    ubyte warp_dest_B <comment="WarpDest_Table index for nearest pathfinding node B">;
+    ubyte block_flag <comment="0=block0 (pre-timeskip), 1=blocks1/2 (post-timeskip)">;
+    ubyte seq_counter <comment="Monotonic 0-77 across all 78 slots (maps to entity index)">;
+} sPatrolRegSlot <read=PatrolRegSlotRead, size=4>;
+
+string PatrolRegSlotRead(sPatrolRegSlot &s) {
+    local string r;
+    if (s.warp_dest_A == 0 && s.warp_dest_B == 0)
+        return Str("seq=%d (empty)", s.seq_counter);
+    SPrintf(r, "seq=%d entity=%d  WD_A=%d WD_B=%d  blk=%d", s.seq_counter, s.seq_counter, s.warp_dest_A, s.warp_dest_B, s.block_flag);
+    return r;
+}
+
+typedef struct {
+    sPatrolRegSlot Slot[6] <comment="6 sequential Patrol Region slots">;
+} sPatrolRegEntry <read=Str("slots seq %d-%d", this.Slot[0].seq_counter, this.Slot[5].seq_counter), size=24>;
+
+// Block (263 entity slots + 20 trailing bytes)
+typedef struct {
+    local int i;
+    for (i = 0; i < 250; i++) {
+        sEntityRecord Entities <optimize=false>;
+        if (Entities[i].record_type > 3) {
+            i++;
+            break;
+        }
+    }
+
+    if (i < 250) {
+        local int null_count = 250 - i;
+        ubyte NullPadding[null_count * 24] <hidden=true, comment="Null padding after terminator">;
+    }
+
+    sPatrolRegEntry PatrolRegistry[13] <comment="78-slot wander zone registry (6 slots per entry)">;
+
+    BigEndian();
+    uint PatrolOverflowIndex[5] <comment="Entity indices 78-82: patrol entities beyond the 78-slot registry">;
+    LittleEndian();
+} sBlock;
+
+// File header + 3 blocks
+typedef struct {
+    uint TypeHeader <format=hex, comment="0x4E28 for monastery BAI">;
+    uint Magic <format=hex, comment="0x535353 = 'SSS\\0'">;
+    uint Reserved;
+    uint Block0Offset <comment="Block 0 data offset from file data start (0x18)">;
+    uint Block1Offset <comment="Block 1 data offset">;
+    uint Block2Offset <comment="Block 2 data offset">;
+} sFileHeader;
+
+sFileHeader Header;
+FSeek(0x18 + Header.Block0Offset); sBlock Block0 <open=true>;
+FSeek(0x18 + Header.Block1Offset); sBlock Block1;
+FSeek(0x18 + Header.Block2Offset); sBlock Block2;

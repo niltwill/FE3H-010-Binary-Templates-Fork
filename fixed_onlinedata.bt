@@ -1,103 +1,119 @@
 //------------------------------------------------
-//--- 010 Editor v15.0.2 Binary Template
+//--- 010 Editor v13.0.1 Binary Template
 //
 //      File: fixed_onlinedata.bt
-//   Authors: Reichard
-//   Version: 1.0
-//   Purpose: parse fixed_onlinedata.bin
-//  Category: Reichard
-// File Mask: *fixed_onlinedata.bin
-//  ID Bytes: 
-//   History: 
-//   1.0    09/04/25 ReichardTheThird: Started this
+//   Authors: Reichard, niltwill
+//   Version: 2.0
+//   Purpose: FE3H fixed_onlinedata.bin - Spirits of the Fallen item/EXP loot config
+//  Category: Game Data
+// File Mask: fixed_onlinedata.bin
+//   History:
+//     2.0 - niltwill: all fields identified via cross-reference with Item_enum.bt
+//           and section 2 roll-count confirmation
+//     1.0 - Reichard: initial parse, all fields unknown
 //------------------------------------------------
+
+// "Spirits of the Fallen" (online feature): When connected, allied and
+// enemy spirit markers appear on battle maps where other players' units
+// died. Standing on one grants the current unit a reward:
+// 1. Yellow spirit (ally died here): EXP bonus or weapon durability repair
+// 2. Purple spirit (enemy died here): item drop (crafting/forge materials)
 
 #include "Structs.bt"
 
 LittleEndian();
-local int i =0;
 
-struct sEntry0{
-    byte unkbyte0x0;
-    byte unkbyte0x1;
-    short unkbyte0x2;
-    
-    byte unkbyte0x4;
-    byte unkbyte0x5;
-};
+typedef struct {
+    uint32 section_count <name="Section Count", comment="Always 5">;
+    uint32 header_size <name="Header Size", comment="Always 0x2C (44 bytes)">;
+    uint32 sec0_data_size <name="Sec0 Data Size">;
+    uint32 sec1_abs_start <name="Sec1 Abs Offset">;
+    uint32 sec1_data_size <name="Sec1 Data Size">;
+    uint32 sec2_abs_start <name="Sec2 Abs Offset">;
+    uint32 sec2_data_size <name="Sec2 Data Size">;
+    uint32 sec3_abs_start <name="Sec3 Abs Offset">;
+    uint32 sec3_data_size <name="Sec3 Data Size">;
+    uint32 sec4_abs_start <name="Sec4 Abs Offset">;
+    uint32 sec4_data_size <name="Sec4 Data Size", comment="sec4_abs_start + sec4_data_size = EOF">;
+} GlobalHeader <name="Global Header", bgcolor=cLtGray>;
 
-struct sEntry1{
-    CharID unkShort0x0[4];
-    byte unkArray[4];
-};
+typedef struct {
+    uint32 magic <name="Magic", format=hex, comment="Always 0x16121900">;
+    uint32 entry_count <name="Entry Count", comment="Always 100 for all 5 sections">;
+    uint32 entry_stride <name="Entry Stride", format=hex>;
+    byte padding[52] <name="Padding", hidden=true>;
+} SubHdr <name="Sub-Header", bgcolor=cLtYellow>;
 
-struct sEntry2{
-    byte NumRolls;
-    byte otherNumRolls;
-    byte unkbyte0x2[10];
-    
-    byte unkbyte0xc[10];
-    byte unkbyte0x16[3];
-    byte unkbyte0x19[3];
-};
+// 57 active entries (indices 0-56); entries 57-99 are all zero/unused.
+// yellow_item_id = 0 for entries 39-56 (purple-only rewards).
+typedef struct {
+    Item yellow_item_id <name="Yellow Spirit Item ID", comment="Item granted when player stands on a yellow spirit (allied death tile). 0 = no yellow reward for this pool entry.">;
+    Item purple_item_id <name="Purple Spirit Item ID", comment="Item granted when player stands on a PURPLE spirit (enemy death tile).">;
+    ubyte yellow_amount <name="Yellow Spirit Quantity", comment="How many of yellow_item_id the player receives.">;
+    ubyte purple_amount <name="Purple Spirit Quantity", comment="How many of purple_item_id the player receives.">;
+} Sec0Entry <name="Item Pool Entry", size=6, bgcolor=cLtBlue>;
 
-struct sEntry3{
-    CharID CharsID;
-    byte Chapter;
-    byte unkbyte0x3<name="padding?">;
-};
+// Drop Weight + Quantity Table
+// Parallel to section 0 (same index = same item pool entry).
+// Higher weight = more likely to be randomly chosen. 0 = not eligible.
+// Values observed: 0, 16-600, 1000-1015
+typedef struct {
+    uint16 weight_diff0 <name="Weight (Difficulty 0)", comment="Drop selection weight for difficulty level 0 (Normal). 0 = not available.">;
+    uint16 weight_diff1 <name="Weight (Difficulty 1)", comment="Drop selection weight for difficulty 1 (Hard). 0 = not available.">;
+    uint16 weight_diff2 <name="Weight (Difficulty 2)", comment="Drop selection weight for difficulty 2 (Maddening). 0 = not available.">;
+    uint16 weight_diff3 <name="Weight (Difficulty 3)", comment="Drop selection weight for difficulty 3 (Infernal?). 0 = not available.">;
+    ubyte quantity_diff0 <name="Quantity (Difficulty 0)", comment="Item count granted at difficulty 0.">;
+    ubyte quantity_diff1 <name="Quantity (Difficulty 1)", comment="Item count granted at difficulty 1.">;
+    ubyte quantity_diff2 <name="Quantity (Difficulty 2)", comment="Item count granted at difficulty 2.">;
+    ubyte quantity_diff3 <name="Quantity (Difficulty 3)", comment="Item count granted at difficulty 3.">;
+} Sec1Entry <name="Drop Weight Entry", size=12, bgcolor=cLtGreen>;
 
-struct sEntry4{
-    ushort XMax;
-    ushort XMin;
-    
-    ushort YMin;
-    ushort YMax;
-    
-    byte unkbyte0x8;
-    byte unkbyte0x9<name="padding?">;
-};
+// Per-Map Loot Configuration - one entry per battle map
+// Maps 0-1 have num_yellow=num_purple=0 (tutorial/prologue = no spirits).
+// yellow_pool and purple_pool hold indices into section 0's item pool.
+// The game randomly selects items from these pools when the player activates a spirit tile.
+// bonus pools (3 slots each): additional guaranteed or rare drops, also indexed into section 0. (active count = num_bonus)
+typedef struct {
+    ubyte num_yellow <name="Yellow Pool Count", comment="Number of active entries in yellow_pool[]. Range 0-10.">;
+    ubyte num_bonus <name="Bonus Pool Count", comment="Number of active entries in bonus_yellow[] and bonus_purple[]. Range 0-3.">;
+    ubyte yellow_pool[10] <name="Yellow Spirit Pool", comment="Section 0 item pool indices eligible for yellow spirit (ally death) rewards. First num_yellow entries are valid.">;
+    ubyte purple_pool[10] <name="Purple Spirit Pool", comment="Section 0 item pool indices eligible for purple spirit (enemy death) rewards. First num_yellow entries are valid.">;
+    ubyte bonus_yellow[3] <name="Bonus Yellow Pool", comment="Extra section 0 indices for rare/bonus yellow spirit drops. First num_bonus entries are valid.">;
+    ubyte bonus_purple[3] <name="Bonus Purple Pool", comment="Extra section 0 indices for rare/bonus purple spirit drops. First num_bonus entries are valid.">;
+} Sec2Entry <name="Map Loot Config", size=28, bgcolor=cLtRed>;
 
-struct sEntry0s{
-    DataSection Header;
-    for(i=0; i<Header.NumEntries;i++){
-        sEntry0 E;
-    }
-};
+// Character–Chapter Activation
+// Maps late-joining characters to the first chapter where their spirit
+// can appear on a battle map (they aren't recruitable from the start).
+// Confirmed pairs: Seteth ch13, Flayn ch7, Hanneman ch8, Manuela ch8, Gilbert ch13, Alois ch11, Catherine ch5, Shamir ch5, Cyril ch5
+// Entry 9 has anomalous bytes [21,4,7,0] - may be Ignatz(21) + flag(4) + chapter(7)- possibly DLC-related.
+typedef struct {
+    CharID char_id <name="Character ID", comment="Character whose spirit becomes available starting from first_chapter. Entry 9 anomalous: bytes are [21,4] = may be char_id=21(Ignatz) + flag byte, not a u16.">;
+    uint16 first_chapter <name="First Chapter", comment="Chapter index (0-based) from which this character's spirit can appear on battle maps.">;
+} Sec3Entry <name="Char-Chapter Pair", size=4, bgcolor=cLtPurple>;
 
-struct sEntry1s{
-    DataSection Header;
-    for(i=0; i<Header.NumEntries;i++){
-        sEntry1 e;
-    }
-};
+// Map Spawn Coordinate Table
+// All zero in the shipped file. Populated at runtime with data from Nintendo's online servers,
+// defining the tile-coordinate bounding box within each map where spirit markers can actually spawn.
+// Format mirrors fixed_areadata.bin sec4 (sEntry4 in original template).
+typedef struct {
+    uint16 x_max <name="X Max", comment="Maximum map tile X coordinate for spirit spawn zone.">;
+    uint16 x_min <name="X Min", comment="Minimum map tile X coordinate for spirit spawn zone.">;
+    uint16 y_min <name="Y Min", comment="Minimum map tile Y coordinate for spirit spawn zone.">;
+    uint16 y_max <name="Y Max", comment="Maximum map tile Y coordinate for spirit spawn zone.">;
+    ubyte unk_b8 <name="Unk B8", hidden=true, comment="Always 0 in shipped file.">;
+    ubyte unk_b9 <name="Unk B9", hidden=true, comment="Always 0 in shipped file.">;
+} Sec4Entry <name="Map Spawn Bounds", size=10, bgcolor=cDkGray>;
 
-struct sEntry2s{
-    DataSection Header;
-    for(i=0; i<Header.NumEntries;i++){
-        sEntry2 e;
-    }
-};
+typedef struct { SubHdr h; Sec0Entry e[h.entry_count] <optimize=false>; } Sec0 <name="Sec0 - Item Pool">;
+typedef struct { SubHdr h; Sec1Entry e[h.entry_count] <optimize=false>; } Sec1 <name="Sec1 - Drop Weights">;
+typedef struct { SubHdr h; Sec2Entry e[h.entry_count] <optimize=false>; } Sec2 <name="Sec2 - Map Loot Config">;
+typedef struct { SubHdr h; Sec3Entry e[h.entry_count] <optimize=false>; } Sec3 <name="Sec3 - Char-Chapter Activation">;
+typedef struct { SubHdr h; Sec4Entry e[h.entry_count] <optimize=false>; } Sec4 <name="Sec4 - Map Spawn Bounds (server-filled)">;
 
-struct sEntry3s{
-    DataSection Header;
-    for(i=0; i<Header.NumEntries;i++){
-        sEntry3 e<read=Str("Chapter %d - %s",Chapter, EnumToString(CharsID))>;
-    }
-};
-
-struct sEntry4s{
-    DataSection Header;
-    for(i=0; i<Header.NumEntries;i++){
-        sEntry4 e;
-    }
-};
-
-struct sFile {
-    FileSections Sections;
-    sEntry0s E0s;
-    sEntry1s E1s;
-    sEntry2s E2s;
-    sEntry3s E3s;
-    sEntry4s E4s;
-}File<open=true>;
+GlobalHeader hdr;
+FSeek(hdr.header_size);  Sec0 sec0;
+FSeek(hdr.sec1_abs_start); Sec1 sec1;
+FSeek(hdr.sec2_abs_start); Sec2 sec2;
+FSeek(hdr.sec3_abs_start); Sec3 sec3;
+FSeek(hdr.sec4_abs_start); Sec4 sec4;

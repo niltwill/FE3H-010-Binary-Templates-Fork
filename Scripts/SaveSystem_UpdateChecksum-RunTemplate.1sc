@@ -1,0 +1,21 @@
+//------------------------------------------------
+//--- 010 Editor v15.0.2 Script File
+//
+//      File: Save
+//   Authors: ReichardTheThird, niltwill
+//   Version: 
+//   Purpose: Updates the checksum of the system file before opening the template
+//  Category: Save
+//   History: 
+//------------------------------------------------
+local int checksum32_old = ReadUInt(FTell());
+local int sum = 0;
+for (local uint i = 0xC; i < FileSize(); i++) {
+    sum += ReadUByte(i);
+}
+local int checksum32_new = sum;
+
+Printf(Str("Old Checksum: 0x%x\nNew Checksum: 0x%x\n", checksum32_old, checksum32_new));
+
+WriteUInt(FTell(), checksum32_new);
+RunTemplate("saveSystem.bt",false);

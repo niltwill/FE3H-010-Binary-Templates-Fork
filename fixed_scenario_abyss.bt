@@ -1,0 +1,106 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.1 Binary Template
+//
+//      File: fixed_scenario_abyss.bt
+//   Authors: niltwill
+//   Version: 1.0
+//   Purpose: FE3H fixed_scenario_abyss.bin - Cindered Shadows DLC battle map config
+//  Category: Game Data
+// File Mask: fixed_scenario_abyss.bin
+//   History:
+//     1.0 - Initial RE via cross-reference with fixed_scenario.bin structure
+//------------------------------------------------
+
+// 45 entries:
+// [0-34] -> 35 active CS battle/aux/paralogue scenarios
+// [35-37] -> 3 null/placeholder entries (all zeros except 0xFF sentinel)
+// [38-41] -> 4 special DLC scenarios (chapter IDs 84-87)
+// [42-44] -> 3 CS defeat/reward configuration entries
+
+#include "Structs.bt"
+LittleEndian();
+local int i <hidden=true>;
+
+struct CSScenario {
+    // Characters listed here are unavailable for this battle or appear as special NPC combatants.
+    CharID unavailableCharIDA <bgcolor=cDkGreen>;
+    CharID unavailableCharIDB <bgcolor=cDkGreen>;
+    CharID unavailableCharIDC <bgcolor=cDkGreen>;
+    CharID unkParalogueCharIDA <bgcolor=cYellow>;
+    CharID unkParalogueCharIDB <bgcolor=cYellow, comment="0x03E8 (1000) = empty. Main game uses 0xFFFF.">;
+
+    ubyte unkTernary <bgcolor=cRed, comment="Always 0 in CS data (main: 0/1/2 only). Possibly always 0 in DLC context.">;
+    ubyte unkPad <bgcolor=cDkYellow, comment="Always 0. Structural padding or unused route field.">;
+
+    // CS Chapter IDs (byte 12 values): 19-30 for the 12 CS chapter slots.
+    // Each of the 7 CS Acts maps to one of these IDs; multiple scenarios
+    // (main battle + aux battles) can share a chapter ID.
+    ubyte chapter <bgcolor=cDkGreen, name="Chapter ID", comment="CS chapter ID (19-30 for main CS battles; 84-87 for special DLC entries).">;
+    ubyte auxAvailableChapter <bgcolor=cYellow,  name="MapList / Aux Avail", comment="Map ID or availability chapter. Values 1-96. Entries sharing the same chapter ID may use different values here (multiple maps per CS act).">;
+    ubyte unkProgressA <bgcolor=cYellow, comment="0 or 3 in observed CS data. Equivalent to unkProgressA in main file.">;
+    ubyte unkProgressB <bgcolor=cYellow, comment="0 or 1 (occasionally mirrors chapter). Equivalent to unkProgressB.">;
+
+    ubyte recruitLevel <bgcolor=cDkGreen, name="Recruit/Recommended Level", comment="Recommended unit level for this CS battle. 0 = paralogue/special, 1-16 observed for CS battles.">;
+
+    // Obviously, only one route is here (CS DLC) instead of four (SS/AM/VW/CF).
+    ubyte expirationChapterCS <bgcolor=cDkGreen, name="CS Expiration Chapter", comment="Chapter this scenario becomes available and expires. Mirrors the chapter field for most entries. 0xFF = no expiration (paralogues, aux).">;
+    ubyte hiddenTurnLimit <bgcolor=cDkGreen, name="Hidden Turn Limit", comment="Secret turn limit (like main game). 0xFF = unlimited. Values 16-54 seen for timed CS maps.">;
+    ubyte expirationDate <bgcolor=cDkGreen, name="CS Expiration Date", comment="Expiration day (like main ParalogueExpiration date fields). Always 0xFF in CS data = no day-based expiry.">;
+
+    // Enemy level scaling (Norm/Hard/Maddening) is absent in CS format.
+    // CS enemies scale differently or use fixed levels per chapter.
+    // "Conditions" slightly differ for CS, but it reuses the same enum
+    // The small values 0-7 in the victory condition slots are the first 8 entries of the same enum. The CS text strings swap out the character names to CS-appropriate ones (Yuri/Hapi/etc.).
+    Conditions victoryConditionLabel <bgcolor=cDkGreen, name="Victory Condition Label", comment="CS victory condition using the same Conditions enum as the base game. CS localises character names in text strings but enum values are identical to base game.">;
+    ubyte unkConditionB <bgcolor=cYellow, comment="Secondary condition or MapList (u8 map enum). Values 0-7 observed. May be the CS map ID (small sequential values per CS chapter).">;
+    ubyte unkConditionC <bgcolor=cYellow, comment="Tertiary condition. Values 0-6 observed. Role unconfirmed.">;
+    ubyte unkConditionD <bgcolor=cYellow, comment="Quaternary condition. Values 0-7 observed. Role unconfirmed.">;
+
+    // Active bits observed in CS:
+    // bit0 = Use 3 BAI Route Blocks, bit1 = Use 2 BAI Route Blocks,
+    // bit9 = unknown, bit10 = BGM Continues Into Turn 1,
+    // bit12 = Cindered Shadows Victory Condition.
+    struct CSScenarioFlags {
+        ubyte bit0: 1 <name="Use 3 BAI Route Blocks">;
+        ubyte bit1: 1 <name="Use 2 BAI Route Blocks">;
+        ubyte bit2: 1 <name="Silver Snow Victory Condition">;
+        ubyte bit3: 1 <name="Azure Moon Victory Condition">;
+        ubyte bit4: 1 <name="Verdant Wind Victory Condition">;
+        ubyte bit5: 1 <name="Crimson Flower Victory Condition">;
+        ubyte bit6: 1 <name="Is Post Timeskip">;
+        ubyte bit7: 1 <name="Unknown">;
+        ubyte bit8: 1 <name="Forced Casual Mode">;
+        ubyte bit9: 1 <name="Unknown">;
+        ubyte bit10: 1 <name="BGM Continues Into Turn 1">;
+        ubyte bit11: 1 <name="Death BGM-Related">;
+        ubyte bit12: 1 <name="Cindered Shadows Victory Condition">;
+        ubyte bit13: 1 <name="Unused">;
+        ubyte bit14: 1 <name="Unused">;
+        ubyte bit15: 1 <name="Unused">;
+    } flags <name="Scenario Flags", bgcolor=cGray>;
+
+    byte divinePulseIncrease <bgcolor=cDkGreen, name="Divine Pulse Increase", comment="Divine pulses awarded on completion. Signed (negative possible). CS Act 1 = +4.">;
+    byte divinePulseIncreaseMad <bgcolor=cDkGreen, name="Divine Pulse (Maddening)", comment="Divine pulses on Maddening. CS Act 1 = +5.">;
+
+    // CS has 3 defeat condition slots (vs main's 5: casual+SS+AM+VW+CF).
+    // CS (route 5) uses the defeat byte. Known CS defeat conditions:
+    // 166=TimerAshen, 167=TimerAshenByleth, 182=FallAshen, 184=TotalDefeatAelfric, 185=FallAshenAelfricByleth
+    Conditions casualDefeatConditionLabel <bgcolor=cDkGreen, name="Casual Defeat Condition", comment="Defeat condition in casual/classic mode. Uses same Conditions enum as base game.">;
+    Conditions defeatConditionCS <bgcolor=cDkGreen, name="CS Defeat Condition",comment="Primary CS defeat condition (equivalent to defeatConditionLabelSS in main). Battle_GetDefeatConditionID returns this directly for route 5 (CS). CS-specific values: 166=TimerAshen, 182=FallAshen, 184=TotalDefeatAelfric, 185=FallAshenAelfricByleth.">;
+    Conditions defeatConditionCSAlt <bgcolor=cDkGreen, name="CS Alternate Defeat Condition", comment="Secondary CS defeat condition (equivalent to defeatConditionLabelAM in main). Often 0 (no second condition). CS-specific values: 167=TimerAshenByleth.">;
+    ubyte padding <bgcolor=cDkYellow, comment="Always 0. Structural padding.">;
+};
+
+struct sFile {
+    FileSections Sections;
+
+    FSeekNextSection(Sections);
+    struct CSScenarioData {
+        DataSection Header;
+        for (i = 0; i < Header.NumEntries; i++) {
+            CSScenario scenario <name="CS Scenario",
+                                  comment="Cindered Shadows DLC battle scenario configuration.">;
+        }
+    } csScenarioData <name="CS Scenario Data">;
+    // Note: No "GenericEnemyWeapons" section here (unlike fixed_scenario.bin)
+} file <open=true>;

@@ -2,34 +2,88 @@
 //--- 010 Editor v15.0.2 Binary Template
 //
 //      File: fixed_tutorial.bt
-//   Authors: Reichard
-//   Version: 1.0
-//   Purpose: Parse fixed_tutorial.bin
-//  Category: Reichard
-// File Mask: *fixed_tutorial.bin
-//  ID Bytes: 
-//   History: 1.0
+//   Authors: Reichard, niltwill
+//   Version: 2.0
+//   Purpose: FE3H fixed_tutorial.bin - Tutorial popup configuration
+//  Category: Game Data
+// File Mask: fixed_tutorial.bin
+//  ID Bytes:
+//   History:
+//     2.0 - niltwill: all fields identified from scrdata/tuscrdata cross-reference
+//     1.0 - Reichard: raw ubyte[42] stub
 //------------------------------------------------
+
+// 1. Monastery tutorials (entries 0-18)
+// Triggered during free-roam monastery exploration. Show a topic popup
+// with a house-specific NPC commenting on the tutorial topic.
+
+// 2. Battle / Event tutorials (entries 19-104)
+// Triggered by specific battle events or chapter milestones. No NPC commentary.
+
+// Reference data:
+// - tuscrdata-Table_0 (214 entries): NPC dialogue lines introducing topics
+//  * Entries 0-44: Black Eagles characters' tutorial commentary
+//  * Entries 45-90: Blue Lions characters' tutorial commentary
+//  * Entries 91-165: Golden Deer characters' tutorial commentary
+//  * Entries 165+: Teacher/staff and special entries
+// - tuscrdata-Table_1 (624 entries): Tutorial topic short titles
+// - scrdata-Table_3 (151 entries): Tutorial body text (two paragraphs each)
+//  * Entries 0-22: Monastery exploration tutorials
+//  * Entries 23+: Battle/event tutorial messages
+//  * Entries 100+: Sothis/character commentary on battle mechanics
+//  * Entries 200+: DLC Cindered Shadows tutorial content
 
 #include "Structs.bt"
 LittleEndian();
-local int i=0;
+local int i = 0;
 
-struct sTutorial{
-  ubyte unk[42];  
-    
-};
+typedef struct {
+    // For monastery tutorials (entries 0-18): the scrdata-Table_3 tutorial texts
+    // that are also used as triggers or supplemental content for this chapter.
+    // For battle tutorials (entries 19-104): the primary tutorial content refs.
+    // -1 (0xFFFF) = slot unused.
+    short scrdata_refs[6] <name="scrdata-Table_3 Refs", bgcolor=cWhite, comment="Indices into scrdata-Table_3 tutorial body texts. -1=unused. For entries 19-104 these are the main battle/event tutorial content.">;
 
-struct sTutorials{
+    // Metadata
+    ubyte unk_b12[4] <name="Unknown B12-15", hidden=true, comment="Always 0 in all active entries.">;
+    ubyte pad_b16 <name="Padding B16", hidden=true, comment="Always 0.">;
+    ubyte auto_show <name="Auto-Show Flag", bgcolor=cSilver, comment="1 = this tutorial triggers automatically at chapter/segment start. 0 = triggered by specific game events. Entry 0 (Calendar) is auto-shown.">;
+
+    // NPC commentary indices (by house)
+    // Each group has up to 4 NPC lines, one per tutorial slide shown.
+    // tuscrdata-Table_0 contains house-specific NPC reactions to each tutorial topic.
+    // The game selects the group matching the player's chosen house.
+    // 0 = empty slot (fewer than 4 tutorial slides for this entry).
+    // When g1=g2=g3 (same indices all three groups): tutorial is house-agnostic
+    // (shown with the same NPC regardless of house, e.g. a teacher or Sothis).
+    ubyte npc_gd_refs[4] <name="NPC Commentary (Golden Deer)", bgcolor=cDkYellow, comment="tuscrdata-Table_0 indices for Golden Deer house NPC commentary. Index range 91-165. 0=empty slot.">;
+    ushort pad16_a <name="Padding", hidden=true, comment="Always 0.">;
+
+    ubyte npc_be_refs[4] <name="NPC Commentary (Black Eagles)", bgcolor=cDkRed, comment="tuscrdata-Table_0 indices for Black Eagles house NPC commentary. Index range 1-44. 0=empty slot.">;
+    ushort pad16_b <name="Padding", hidden=true, comment="Always 0.">;
+
+    ubyte npc_bl_refs[4] <name="NPC Commentary (Blue Lions)", bgcolor=cDkBlue, comment="tuscrdata-Table_0 indices for Blue Lions house NPC commentary. Index range 46-90. 0=empty slot.">;
+    ushort pad16_c <name="Padding", hidden=true, comment="Always 0.">;
+
+    // Tutorial topic title references
+    // tuscrdata-Table_1 topic title indices (up to 4 per entry).
+    // Controls which topic title text appears in the tutorial popup header and
+    // which 'tutorial seen' save flag gets set when the tutorial is dismissed.
+    // 0=empty slot
+    ubyte topic_refs[4] <name="Topic Titles (tuscrdata-Table_1)", bgcolor=cGray, comment="tuscrdata-Table_1 topic title indices. Each non-zero value = one tutorial slide shown with that topic title. Also used as 'seen' flag IDs in save data.">;
+    ushort pad16_d <name="Padding", hidden=true, comment="Always 0.">;
+
+} sTutorial <name="Tutorial Entry", size=42>;
+
+struct sTutorials {
     DataSection Header;
-    for(i=0;i<Header.NumEntries;i++){
-        sTutorial Tutorial;
+    for (i = 0; i < Header.NumEntries; i++) {
+        sTutorial Tutorial <comment="Active if any non-zero/non-minus1 field; empty if all zero (entries 105-199).">;
     }
 };
 
 struct freeScenario {
     FileSections Sections;
-    
     FSeekNextSection(Sections);
     sTutorials Tutorials;
-}File<open=true>;
+} File <open=true>;

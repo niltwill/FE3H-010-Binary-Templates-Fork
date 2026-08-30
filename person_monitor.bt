@@ -1,0 +1,80 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.1 Binary Template
+//
+//      File: person_monitor.bt
+//   Authors: DeathChaos, niltwill
+//   Version: 1.1
+//   Purpose: FE3H person_monitor0-3.bin - AI/auto-battle combat encounter history
+//   Category: Game Data
+//   File Mask: person_monitor*.bin
+//   History:
+//     1.10  niltwill - unknowns clarified, all 4 files cross-referenced
+//     1.00  DeathChaos - initial RE
+//------------------------------------------------
+
+//  The four variant files (person_monitor0-3.bin) appear to represent different
+//  game state snapshots - likely one per difficulty level (Normal/Hard/Maddening/Inferno)
+//  or one per phase (early/mid/late/endgame).
+//  File0 has the sparsest data; file3 has the most accumulated encounter history.
+//  Each file contains 45 MonitorEntry records. Each record tracks a specific
+//  "encounter pattern" - a recurring grouping of characters that fight together
+//  or face each other in battle. The AI/auto-battle system reads these records
+//  to make tactical decisions when the player delegates control.
+
+LittleEndian();
+
+local int SENTINEL_EMPTY = 0x03E8; // = 1000  participant slot is unused
+local int SENTINEL_NULL = 0xFF00;  // null/placeholder entry marker
+
+typedef struct {
+    uint32 section_count <name="Section Count", comment="Always 1">;
+    uint32 header_size <name="Header Size", comment="Always 0xC (12 bytes)">;
+    uint32 section_total <name="Section Total", comment="Size of section including this header">;
+} OuterHeader <name="Outer Header", bgcolor=cLtGray>;
+
+typedef struct {
+    uint32 magic <name="Magic", format=hex, comment="Always 0x16121900">;
+    uint32 entry_count <name="Entry Count", comment="Always 45">;
+    uint32 entry_stride <name="Entry Stride", format=hex, comment="Always 0x20 (32 bytes)">;
+    byte padding[52] <name="Padding", hidden=true, comment="Always zero">;
+} SectionSubHeader <name="Sub-Header", bgcolor=cLtYellow>;
+
+typedef struct {
+    // Active character IDs. Populated front-to-back.
+    // The first slot containing a value >= 0x03E8 marks the end of active
+    // participants; subsequent slots should be 0x0000.
+    uint16 participant_ids[4] <name="Participant IDs", bgcolor=cRed, comment="Character IDs involved in this encounter group. Slot value 0x03E8 = empty sentinel.">;
+
+    // Zero when at least one participant slot is unused.
+    // Non-zero when all 4 slots are active; acts as an encounter generation
+    // counter starting from 0x03E8 and incrementing per overflow event.
+    uint32 overflow_counter <name="Overflow Counter", comment="0 when buffer has empty slots. Increments as generation counter when all 4 participant slots are filled.">;
+
+    // Secondary tracking - partially decoded.
+    // The values appear to be char IDs or small counters related to the
+    // last active participants, possibly for tie-breaking or AI weighting.
+    ubyte track_a <name="Tracking A", bgcolor=cGray, comment="Char ID or encounter weight. Unconfirmed.">;
+    ubyte track_b <name="Tracking B", bgcolor=cGray, comment="Char ID or secondary counter. Unconfirmed.">;
+    ubyte track_pad <name="Padding (b14)", hidden=true, comment="Always 0x00">;
+    ubyte track_c <name="Tracking C", bgcolor=cGray, comment="Third tracking value. Unconfirmed.">;
+    ubyte track_d <name="Tracking D (unset=0xFF)", bgcolor=cGray, comment="Starts 0xFF (unset); gets a real value as encounter history grows.">;
+    ubyte track_e <name="Tracking E (unset=0xFF)", bgcolor=cGray, comment="Starts 0xFF (unset); gets a real value as encounter history grows.">;
+    ubyte track_f <name="Tracking F (usually 0xFF)", bgcolor=cGray, comment="Usually 0xFF; rarely holds a char ID (entries 42-43).">;
+    ubyte separator <name="Separator (usually 0xFF)", comment="Almost always 0xFF. Part of the -1 marker from original template.">;
+
+    // State counters
+    // 11 single-byte counters that accumulate as gameplay progresses.
+    // Values range 0-8 (byte 27 caps at 6). Byte 31 is always 0.
+    // Likely tracks: encounter rounds, wins, unlocked AI behaviour flags.
+    // counter[7] (= byte 27) is the most reliably non-zero of the 11.
+    ubyte counters[11] <name="State Counters", bgcolor=cDkPurple, comment="11 accumulating counters (range 0-8; counter[7] caps at 6).">;
+    ubyte entry_pad <name="Padding (b31)", hidden=true, comment="Always 0x00">;
+} MonitorEntry <name="Monitor Entry", size=32>;
+
+typedef struct {
+    SectionSubHeader sub_hdr;
+    MonitorEntry entries[sub_hdr.entry_count] <optimize=false, name="Encounter Records">;
+} PersonMonitorSection <name="Person Monitor Section">;
+
+OuterHeader hdr;
+PersonMonitorSection section;

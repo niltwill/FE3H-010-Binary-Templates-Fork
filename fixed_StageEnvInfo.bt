@@ -2,132 +2,235 @@
 //--- 010 Editor v15.0.1 Binary Template
 //
 //      File: fixed_StageEnvInfo.bt
-//   Authors: ReichardTheThird
-//   Version: 1.0
-//   Purpose: probably some metadata surrounding maps, like constance personal checks
+//   Authors: ReichardTheThird, niltwill
+//   Version: 1.1
+//   Purpose: Per-scenario stage environment configuration.
+//            Table 0: fog/atmosphere parameters + boolean flags per map.
+//            Table 1: lighting color palette (ambient + 6 directional lights).
+//            Table 2: per-tile environment effect overlay list.
+//            Table 3: scenario grouping triples (cross-references).
 //  Category: Reichard
 // File Mask: *fixed_stageenvinfo.bin
 //  ID Bytes: 
 //   History: 
-//   1.0    3/31/25 ReichardTheThird: Created BT, Added Constance Sun/Shade
+//   1.1    RE work: decoded all 4 tables; fog params; lighting RGB groups;
+//          tile overlay structure; renamed all fields.
+//   1.0    3/31/25 ReichardTheThird: Created; Constance sun/shade identified.
 //------------------------------------------------
 LittleEndian();
 #include "Structs.bt"
 local int i = 0;
 
+// Time-of-day / weather variant index used in Table 1.
+// Observed values 0-4; controls which environment lighting variant to apply.
+enum<ubyte> EnvTimeVariant {
+    EnvTime_Null = 0,  // Disabled / null lighting entry
+    EnvTime_Variant1 = 1,  // Daytime variant A (outdoor bright)
+    EnvTime_Variant2 = 2,  // Daytime variant B (slightly different)
+    EnvTime_Variant3 = 3,  // Daytime variant C
+    EnvTime_Variant4 = 4,  // Daytime variant D
+};
+
+// Constance's Circadian Beat personal skill:
+// Sun (1) = skill grants Attack/Speed boost
+// Shade(0) = skill grants Defense/Resistance boost
+enum<ubyte> ConstanceCircadianState {
+    Circadian_Shade = 0,
+    Circadian_Sun = 1,
+};
+
 struct StageEnvInfo {
-	FileSections Sections;
-	
-	FSeekNextSection(Sections);
-	struct Table0 {
-		DataSection Header;
-		for(i=0; i<Header.NumEntries; i++){
-			struct Table0Entry {
-				local MapList map= i;
-				
-				float unkFloat0x0;
-				float unkFloat0x4;
-				float unkFloat0x8<comment="Unused?">;
-				float unkFloat0xc<comment="Unused?">;
-				float unkFloat0x10;
-				float unkFloat0x14;
-				float unkFloat0x18;
-				ubyte unkByte0x1c;
-				ubyte unk1[5];
-				ubyte unkByte0x22;
-				ubyte unk2[2];
-				ubyte unkByte0x25;
-				ubyte unkByte0x26;
-				ubyte unkByte0x27;
-				ubyte unkByte0x28;
-				ubyte unkByte0x29;
-				ubyte unkByte0x2a;
-				ubyte unkByte0x2b;
-				ubyte unkByte0x2c;
-				ubyte unkByte0x2d;
-				ubyte unkByte0x2e;
-				ubyte unkByte0x2f;
-				ubyte unkByte0x30;
-				ubyte Constance_SunOrShade<name="Constance Circadian Beat Sun/Shade", comment="determines which effect Circadian Beat grants">;
-				ubyte unkByte0x32;
-				ubyte unkByte0x33;
-				ubyte unkByte0x34;
-				ubyte unkByte0x35;
-				ubyte unkByte0x36;
-				ubyte unkByte0x37;
-				ubyte unk0x38;
-				ubyte unkByte0x39;
-				ubyte unk0x3a;
-				ubyte unk0x3b;
-			}eTable0Entry<name="Scenario",read=EnumToString(map)>;	   
-		}
-	}eTable0;
-	
-	FSeekNextSection(Sections);
-	struct Table1 {
-		DataSection Header;
-		for(i=0; i<Header.NumEntries; i++){
-			struct Table1Entry {
-				local MapList map = i;
-				
-				ubyte c0;
-				ubyte f3;
-				ubyte unk0x2;
-				ubyte g0;
-				
-				ubyte g1;
-				ubyte g2;
-				ubyte a0;
-				ubyte a1;
-				
-				ubyte a2;
-				ubyte b0;
-				ubyte b1;
-				ubyte b2;
-				
-				ubyte e0;
-				ubyte c1;
-				ubyte c2;
-				ubyte d0;
-				
-				ubyte d1;
-				ubyte d2;
-				ubyte f2;
-				ubyte e1;
-				
-				ubyte e2;
-				ubyte f0;
-				ubyte f1;
-			}eTable1Entry<name="Scenario",read=EnumToString(map)>;
-		}
-		ubyte padding[3];
-	}eTable1;
-	
-	FSeekNextSection(Sections);
-	struct Table2 {
-		DataSection Header;
-		for(i=0; i<Header.NumEntries; i++){
-			struct Table2Entry {
-				ubyte unkByte0x0;
-				ubyte unkByte0x1;
-				ubyte someIndex;
-				ubyte unkByte0x3;
-				
-				ubyte unkByte0x4;
-				ubyte unkByte0x5;
-				
-				local MapList map = someIndex;
-			}eTable2Entry<read = EnumToString(map)>;
-		}
-	}eTable2;
-	
-	FSeekNextSection(Sections);
-	struct Table3 {
-		DataSection Header;
-		for(i=0; i<Header.NumEntries; i++){
-			struct Table3Entry {
-				ubyte unk[Header.size];
-			}eTable3Entry<>;
-		}
-	}eTable3;
-}File<open=true>;
+    FileSections Sections;
+    
+    // TABLE 0 - Per-scenario atmosphere parameters
+    // One entry per battle map/scenario (indexed by MapList enum).
+    FSeekNextSection(Sections);
+    struct Table0 {
+        DataSection Header;
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct Table0Entry {
+                local MapList map = i;
+
+                // Fog / atmosphere rendering distances (world units)
+                // The battle map tile size is 1000 world units per tile
+                float fogNear <name="Fog Near Distance", comment="World distance (units) where fog begins. Typical: 1000-1300.">;
+                float fogMid <name="Fog Mid Distance", comment="Fog density reference point. Typical: 2000 (constant).">;
+                float fogFar <name="Fog Far Distance", comment="World distance where fog reaches full density. Typical: 4000.">;
+                float fogHeight <name="Fog Height Reference", comment="Height-based fog reference plane. Typical: 1200.">;
+                float fogScaleA <name="Fog Density Scale A", comment="Fog density multiplier (primary). Almost always 1.0.">;
+                float fogScaleB <name="Fog Density Scale B", comment="Fog density multiplier (secondary). Almost always 1.0.">;
+                float viewRange <name="View/Render Range", comment="Maximum render/view distance. Typical: 6000.">;
+
+                ubyte reserved0 <hidden=true, bgcolor=cBlack, comment="Always 0. Reserved/padding.">;
+                uint nullRef0 <name="Null Reference A (u32=-1)", bgcolor=cBlack, comment="Always 0xFFFFFFFF. Null sentinel for an optional data reference.">;
+                ubyte nullRef1 <name="Null Reference B (u8=0xFF)", bgcolor=cBlack, comment="Always 0xFF. Part of null sentinel block.">;
+                ubyte reserved1 <hidden=true, bgcolor=cBlack, comment="Always 0. Reserved/padding.">;
+                ushort nullRef2 <name="Null Reference C (u16=-1)", bgcolor=cBlack, comment="Always 0xFFFF. Null sentinel for an optional u16 reference.">;
+                ubyte reserved2 <hidden=true, bgcolor=cBlack, comment="Always 0. Reserved/padding.">;
+                
+                // Boolean environment flags
+                // All observed values are 0 or 1 (boolean).
+                // Many flags are nearly always 1 (global feature enables). Rarer flags mark specific optional stage effects.
+                ubyte flag_0x26 <name="Flag 0x26", comment="Optional stage feature flag. Set in ~36% of scenarios.">;
+                ubyte flag_0x27 <name="Flag 0x27", comment="Rare flag. Set in only 1 scenario.">;
+                ubyte flag_0x28 <name="Flag 0x28", comment="Nearly universal flag. Set in 102/103 scenarios (1 exception).">;
+                ubyte flag_0x29 <name="Flag 0x29", comment="Universal flag. Set in all 103 scenarios.">;
+                ubyte flag_0x2a <name="Flag 0x2a", comment="Universal flag. Set in all 103 scenarios.">;
+                ubyte flag_0x2b <name="Flag 0x2b", comment="Optional flag. Set in ~15% of scenarios.">;
+                ubyte flag_0x2c <name="Flag 0x2c", comment="Always 0.">;
+                ubyte flag_0x2d <name="Flag 0x2d", comment="Optional flag. Set in ~28% of scenarios.">;
+                ubyte flag_0x2e <name="Flag 0x2e", comment="Nearly universal flag. Set in 98/103 scenarios.">;
+                ubyte flag_0x2f <name="Flag 0x2f", comment="Nearly universal flag. Set in 100/103 scenarios.">;
+                ubyte flag_0x30 <name="Flag 0x30", comment="Optional flag. Set in ~39% of scenarios.">;
+
+                ConstanceCircadianState Constance_SunOrShade <name="Constance Circadian Beat: Sun or Shade", comment="0=Shade (Def/Res bonus), 1=Sun (Atk/Spd bonus). Set to Sun in 25/103 scenarios (mostly outdoor/daytime maps).">;
+
+                ubyte flag_0x32 <name="Flag 0x32", comment="Common flag. Set in 95/103 scenarios.">;
+                ubyte flag_0x33 <name="Flag 0x33", comment="Rare flag. Set in only 1 scenario.">;
+                ubyte flag_0x34 <name="Flag 0x34", comment="Always 0.">;
+                ubyte flag_0x35 <name="Flag 0x35", comment="Rare flag. Set in only 1 scenario.">;
+                ubyte flag_0x36 <name="Flag 0x36", comment="Optional flag. Set in ~23% of scenarios.">;
+                ubyte flag_0x37 <name="Flag 0x37", comment="Always 0.">;
+                ubyte flag_0x38 <name="Flag 0x38", comment="Rare flag. Set in only 1 scenario.">;
+                ubyte flag_0x39 <name="Flag 0x39", comment="Rare flag. Set in only 1 scenario.">;
+                ubyte flag_0x3a <name="Flag 0x3a", comment="Rare flag. Set in 4 scenarios.">;
+
+                // Lighting preset index
+                // Indexes into Table 1 to select the lighting color configuration for this scenario.
+                // Range: 0-175. 0 = no lighting override (null / default).
+                // Values >102 may reference DLC lighting entries or a separate extended preset table.
+                ubyte lightingPresetIndex <name="Table1 Lighting Preset Index", bgcolor=cYellow, comment="Index into Table 1 lighting palette for this scenario. 0=none, 1-102=base game presets, 103+=DLC/extended.">;
+
+            } eTable0Entry<name="Scenario", read=EnumToString(map)>;
+        }
+    } eTable0;
+
+    // TABLE 1 - Lighting color palette
+    // One entry per lighting preset. Defines ambient color and 6 colored directional lights (a-f) as RGB triples.
+    //
+    // Note: The primary colors (blue=a, red=b, green=c, yellow=d, cyan=e, red-orange=f)
+    // are developer debug/editor colors that color-code the 6 light sources visually.
+    // The only field that meaningfully varies between active entries is the ambient group (g):
+    // bright gray for outdoor day, near-black for indoor/night.
+    //
+    // Entries 0-36: active lighting configs with full color data.
+    // Entries 37-102: disabled/null entries (all lights off, white ambient).
+    FSeekNextSection(Sections);
+    struct Table1 {
+        DataSection Header;
+        // The 23 bytes per entry are physically stored in a shuffled order
+        // across the light groups. Physical byte layout:
+        // [0]=c0 [1]=f3 [2]=timeVariant [3]=g0 [4]=g1 [5]=g2
+        // [6]=a0 [7]=a1 [8]=a2 [9]=b0 [10]=b1 [11]=b2
+        // [12]=e0 [13]=c1 [14]=c2 [15]=d0 [16]=d1 [17]=d2
+        // [18]=f2 [19]=e1 [20]=e2 [21]=f0 [22]=f1
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct Table1Entry {
+                local MapList map = i;
+
+                ubyte c0 <name="Light C: category/reserved", comment="Always 0. Reserved byte for light group C.">;
+                ubyte f3 <name="Light F: strength/alpha", comment="Intensity of light F. 128=50%, 255=full, 0=disabled.">;
+
+                EnvTimeVariant timeVariant <name="Time-of-Day Variant", comment="0=null/disabled, 1-4=daytime environment variants. Controls which atmospheric lighting variant is active.">;
+
+                // Ambient light (g group) - the primary per-entry differentiator.
+                // (227,227,227)=bright outdoor day; (25,25,25)=dark indoor/night; (255,255,255)=null/disabled entry.
+                ubyte g0 <name="Ambient R", bgcolor=cRed>;
+                ubyte g1 <name="Ambient G", bgcolor=cGreen>;
+                ubyte g2 <name="Ambient B", bgcolor=cBlue, comment="Ambient (global) light RGB. The only field that varies meaningfully between active entries: 227=bright day, 25=dark night/indoor, 255=null entry.">;
+
+                // Directional light A (debug color: blue)
+                ubyte a0 <name="Light A: R", bgcolor=cRed>;
+                ubyte a1 <name="Light A: G", bgcolor=cGreen>;
+                ubyte a2 <name="Light A: B", bgcolor=cBlue, comment="Directional light A RGB. Debug-coded blue (0,0,255) in active entries; (0,0,0) in disabled entries.">;
+
+                // Directional light B (debug color: red)
+                ubyte b0 <name="Light B: R", bgcolor=cRed>;
+                ubyte b1 <name="Light B: G", bgcolor=cGreen>;
+                ubyte b2 <name="Light B: B", bgcolor=cBlue, comment="Directional light B RGB. Debug-coded red (255,0,0).">;
+
+                // Directional light E strength (stored before c1/c2 in file)
+                ubyte e0 <name="Light E: R / Strength", comment="Light E first component, also serves as strength byte (128=50%).">;
+
+                // Directional light C (debug color: green, partial - c0 is above)
+                ubyte c1 <name="Light C: G", bgcolor=cGreen>;
+                ubyte c2 <name="Light C: B", bgcolor=cBlue, comment="Directional light C (G,B components). Debug-coded green. c0 (R) is stored at byte[0].">;
+
+                // Directional light D (debug color: yellow)
+                ubyte d0 <name="Light D: R", bgcolor=cRed>;
+                ubyte d1 <name="Light D: G", bgcolor=cGreen>;
+                ubyte d2 <name="Light D: B", bgcolor=cBlue, comment="Directional light D RGB. Debug-coded yellow (255,255,0).">;
+
+                // Light F component 2 (stored before e1/e2 in file)
+                ubyte f2 <name="Light F: B", comment="Light F blue component (typically 25).">;
+
+                // Directional light E (debug color: cyan, remainder)
+                ubyte e1 <name="Light E: G", bgcolor=cGreen>;
+                ubyte e2 <name="Light E: B", bgcolor=cBlue, comment="Directional light E (G,B components). Debug-coded cyan. e0 (R/strength) is stored at byte[12].">;
+
+                // Directional light F (debug color: red-orange, remainder)
+                ubyte f0 <name="Light F: R", bgcolor=cRed>;
+                ubyte f1 <name="Light F: G", bgcolor=cGreen, comment="Directional light F (R,G components). Debug-coded red-orange (255,25). f2 (B) and f3 (strength) are stored at bytes[18] and [1] respectively.">;
+
+            } eTable1Entry<name="Lighting Preset", read=EnumToString(map)>;
+        }
+        ubyte padding[3] <hidden=true>;
+    } eTable1;
+
+    // TABLE 2 - Per-tile environment effect overlay
+    // A flat list of specific tiles on specific maps that have environment
+    // effects applied (localized fog, audio attenuation zones, special rendering overlays, etc.).
+    // Entries with mapIndex=255 are null/unused slots.
+    FSeekNextSection(Sections);
+    struct Table2 {
+        DataSection Header;
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct Table2Entry {
+                // Bit-packed environment effect flags for this tile.
+                // Observed packed values: 0,8,32,48,66,88,96,120,130,141,152,201,208,214,220,232,234,236,242,244,249,251,252,254
+                ubyte effectFlags <name="Environment Effect Flags", comment="Bitmask of environment properties active on this tile.">;
+
+                // Effect type/variant index (0-20).
+                ubyte effectType <name="Effect Type/Variant", comment="Environment effect variant index (0-20). Selects which specific effect configuration to apply.">;
+
+                // Which scenario this tile belongs to.
+                ubyte mapIndex <name="Scenario/Map Index", comment="Table 0 scenario index this tile is in. 255=null entry.">;
+
+                ubyte nullSeparator <hidden=true, bgcolor=cBlack, comment="Always 0xFF. Alignment sentinel / null separator byte.">;
+
+                // Tile coordinates within the 32x32 battle grid (0-based).
+                // Range observed: 0-29 (within the usable 30x30 area of the grid).
+                ubyte tileX <name="Tile X Coordinate", comment="Column (0-29) on the battle map tile grid.">;
+                ubyte tileY <name="Tile Y Coordinate", comment="Row (0-29) on the battle map tile grid.">;
+
+                local string readStr;
+                if (mapIndex != 255) {
+                    local MapList map = (MapList)mapIndex;
+                    readStr = EnumToString(map);
+                } else {
+                    readStr = "null";
+                }
+            } eTable2Entry<read=readStr>;
+        }
+    } eTable2;
+
+    // TABLE 3 - Scenario environment grouping triples
+    // Each entry references three scenario/environment indices as a group.
+    // Only entries 0-39 contain real data; entries 40-99 are null (first byte = 0xFF).
+    // Likely groups scenarios that share environment configuration across route variants or phase transitions.
+    FSeekNextSection(Sections);
+    struct Table3 {
+        DataSection Header;
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct Table3Entry {
+                // Three scenario/environment indices forming a logical group.
+                // Values range 7-33 (entries 0-39) or {0xFF,0,0} for null.
+                // 0xFF in idxA = null entry.
+                ubyte idxA <name="Group Index A", comment="First scenario/env index of the group. 0xFF=null entry.">;
+                ubyte idxB <name="Group Index B", comment="Second scenario/env index of the group.">;
+                ubyte idxC <name="Group Index C", comment="Third scenario/env index of the group.">;
+            } eTable3Entry<>;
+        }
+    } eTable3;
+
+} File<open=true>;

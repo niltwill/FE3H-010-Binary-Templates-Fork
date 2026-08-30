@@ -2,139 +2,203 @@
 //--- 010 Editor v14.0 Binary Template
 //
 //      File: fixed_stagedata.bt
-//   Authors: RayTwo?, DeathChaos?, Triabolical, ReichardTheThird
-//   Version: 1.0
-//   Purpose: Determines parameters for terrain and the moveCosts associated for each moveType on those tileTypes
+//   Authors: RayTwo?, DeathChaos?, Triabolical, ReichardTheThird, niltwill
+//   Version: 1.1
+//   Purpose: Determines parameters for terrain and the moveCosts associated
+//            for each moveType on those tileTypes.
+//            Also contains per-scenario key tile coordinate lists (camera
+//            focus / objective markers, up to 10 XY pairs each).
 //  Category: Reichard
 // File Mask: *fixed_stagedata.bin
 //  ID Bytes: 
 //   History: 
-//   1.0    2/16/25 ReichardTheThird: Started taking over maintainance and updates from previous authors
+//   1.1    RE work: decoded unkShort as TerrainVariantGroup; decoded
+//          Section 2 XY pairs; clarified flag bits; renamed padding bytes.
+//   1.0    2/16/25 ReichardTheThird: Created
 //------------------------------------------------
 LittleEndian();
 local int i, j = 0;
 #include "Structs.bt"
+
+// Movement cost restriction categories (used by TileType.restrict field).
+// These map to movement cost rows in Section 1 (TileTypeMoveCostsTable).
 enum<byte> TileType {
-	Not_Passable = 0,
-	Flier_Only = 1,
-	Normal_Cost = 2,
-	Forest_TT = 3,
-	Sand_TT = 4,
-	Thicket_TT = 5,
-	ShoalSnow_TT = 6,
-	Unused_NoCav_3Infantry_TT = 7,
-	Unused_Thief3_NoCav_Infantry_TT = 8,
-	FlameSwampCrater_TT = 9,
-	SpecialTiles_TT = 10,
-	Stairs_TT = 11,
-	Wasteland_TT = 12,
-	Invalid13_TT = 13,
-	Invalid14_TT = 14,
-	Invalid15_TT = 15,
+    Not_Passable = 0,
+    Flier_Only = 1,
+    Normal_Cost = 2,
+    Forest_TT = 3,
+    Sand_TT = 4,
+    Thicket_TT = 5,
+    ShoalSnow_TT = 6,
+    Unused_NoCav_3Infantry_TT = 7,
+    Unused_Thief3_NoCav_Infantry_TT = 8,
+    FlameSwampCrater_TT = 9,
+    SpecialTiles_TT = 10,
+    Stairs_TT = 11,
+    Wasteland_TT = 12,
+    Invalid13_TT = 13,
+    Invalid14_TT = 14,
+    Invalid15_TT = 15,
+};
+
+// Terrain visual/acoustic surface grouping.
+// Groups tiles that share rendering material and audio surface properties.
+// Observed values 0-6 across all 128 terrain types:
+// 0 = Open/flat (Plains, Bridge, Wall, Sand, Snow, Slope...)
+// 1 = Soft/veg (Forest, Mountain, Gate)
+// 2 = Wet/rough (Sea, River, Wasteland, Fortress)
+// 3 = Submerged (Lake)
+// 4 = Structure (Village)
+// 5 = Height/geo (Thicket, Crater, Road, Roof, Cliff, Canyon, Chest)
+// 6 = Isolated (Pillar)
+enum<ushort> TerrainVariantGroup {
+    TVG_OpenFlat = 0,
+    TVG_SoftVeg = 1,
+    TVG_WetRough = 2,
+    TVG_Submerged = 3,
+    TVG_Structure = 4,
+    TVG_HeightGeo = 5,
+    TVG_Isolated = 6,
 };
 
 struct StageData {
-	FileSections Sections;
-    
-	FSeekNextSection(Sections);
-	struct TileData {
-		DataSection Header;
-		for (i = 0; i < Header.NumEntries; i++){
-			struct Terrain {
-				local TerrainTile name<hidden=true>;
-				name = i;
-				local string s;
-				s = EnumToString(name);
-				
-				byte unk<bgcolor=cGreen>;
-				byte unk<bgcolor=cGreen>;
-				ushort unkShort<bgcolor=cGreen>;
-				byte Def<name="Protection+",bgcolor=cRed>;
-				byte Res<name="Resilence+",bgcolor=cBlue>;
-				byte Avoid<name="Avoid Bonus",bgcolor=cYellow>;
-				byte Heal<name="Healing %",bgcolor=cPurple>;
-				byte BreakableWallHP<bgcolor=cGreen>;
-				byte UnusedByte<bgcolor=cGreen>;
-				TileType restrict<name="Movement Cost", bgcolor=cYellow>;
-				struct terrainFlags_Struct{
-					ubyte flag0:1;	
-					ubyte flag1:1;
-					ubyte flag2:1;
-					ubyte flag3:1;
-					ubyte flag4:1;	
-					ubyte flag5:1;
-					ubyte flag6:1;
-					ubyte flag7:1;
-					
-					ubyte flag8:1;	
-					ubyte flag9:1;
-					ubyte flag10:1;
-					ubyte flag11:1;
-					ubyte flag12:1;	
-					ubyte flag13:1;
-					ubyte flag14:1;
-					ubyte flag15:1;
-					
-					ubyte flag16:1;	
-					ubyte flag17:1;
-					ubyte flag18:1;
-					ubyte flag19:1;
-					ubyte flag20:1;	
-					ubyte flag21:1;
-					ubyte flag22:1;
-					ubyte flag23:1;
-				}terrainFlags<bgcolor=cBlue>;	
-			}terrain<read=EnumToString(name)>;
-		};
-	}TerrainData;
-	
+    FileSections Sections;
+
+    // Section 0: Per-terrain-type property table
     FSeekNextSection(Sections);
-	struct TileTypeMoveCostsTable{
-		DataSection Header;
-		for (i=0; i<Header.NumEntries; i++){
-			struct MoveCostsPerTileTypeEntry{
-				local MoveType MoveTypeName<hidden=true>;
-				MoveTypeName = i;   
-				ubyte Impassible;
-				ubyte FlierOnly;
-				ubyte NormalCost;
-				ubyte Forest;
-				
-				ubyte DesertBeach;
-				ubyte ThicketElement;
-				ubyte ShoalSnow;
-				ubyte uNoCav3Inf;
-				
-				ubyte uThief3NoCavInf;
-				ubyte FlameSwampCrater;
-				ubyte SpecialTiles;
-				ubyte Stairs;
-				
-				ubyte Wasteland;
-				ubyte uInvalid13;
-				ubyte uInvalid14;
-				ubyte uInvalid15;
-				
-			}MoveCostsPerTileType<read=EnumToString(MoveTypeName)>;
-		}
-	}TileTypeMoveCostsT;
-	
-    
-	FSeekNextSection(Sections);
-	struct UnkScenarioIndexedWeirdCoordinatesThingTable{
-		DataSection Header;
-		for(i=0; i<Header.NumEntries; i++){
-			struct UnkScenIndexedWeirdCoordsThingEntry{
-				local MapList MapName<hidden=true> = i;
-				struct XCoord{
-					for(j=0; j<10; j++)
-						ubyte XCoord;
-				}XCoords;
-				struct YCoord{
-					for(j=0; j<10; j++)
-						ubyte YCoord;
-				}YCoords;
-			}UnkScenIndexedWeirdCoordsThingE<read=EnumToString(MapName)>;
-		}   
-	}UnkCoordinatesPerScenario;
-}File<open=true>;
+    struct TileData {
+        DataSection Header;
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct Terrain {
+                local TerrainTile name<hidden=true>;
+                name = i;
+                local string s;
+                s = EnumToString(name);
+
+                // Two bytes always observed as 0 in all 128 entries.
+                byte padding0<hidden=true, bgcolor=cBlack>;
+                byte padding1<hidden=true, bgcolor=cBlack>;
+
+                // Visual/acoustic surface material group (0-6).
+                // Groups tile types that share shader material and audio surface acoustics.
+                TerrainVariantGroup variantGroup<name="Terrain Variant Group", bgcolor=cDkGreen, comment="Visual/acoustic surface group: 0=open, 1=soft/veg, 2=wet, 3=submerged, 4=structure, 5=height/geo, 6=isolated">;
+
+                byte Def<name="Protection+", bgcolor=cRed, comment="Flat Defense bonus on this terrain">;
+                byte Res<name="Resilience+", bgcolor=cBlue, comment="Flat Resistance bonus on this terrain">;
+                byte Avoid<name="Avoid Bonus", bgcolor=cYellow, comment="Hit/Avoid bonus on this terrain">;
+                byte Heal<name="Healing %", bgcolor=cPurple, comment="HP healed per turn while standing here (as %)">;
+                byte BreakableWallHP<bgcolor=cGreen, comment="HP of a breakable wall tile; 0 if not breakable">;
+                byte UnusedByte<bgcolor=cGreen, hidden=true>;
+
+                // Movement cost category. Indexes into Section 1
+                // (TileTypeMoveCostsTable) to look up actual AP cost
+                // per movement type.
+                TileType restrict<name="Movement Cost Category", bgcolor=cYellow, comment="Indexes Section 1 to get per-move-type costs">;
+
+                // 3-byte flag field. Observed bit meanings (partial):
+                // Byte 0 bit3 = elevated/interior tile (Wall, Gate, Roof, Slope...)
+                // Byte 0 bit4 = road-like surface (Bridge, Sand, Shoal, Road...)
+                // Byte 0 bit5 = climbable/special traversal (Road, Roof, Chest...)
+                // Byte 0 bit6 = forest-style cover (Forest, Ruins)
+                // Byte 1 bit0 = aquatic/special overlay (Sea, Wasteland, Fortress...)
+                // Byte 1 bit3 = water/impassable-adjacent (Sea, Lake, Wasteland...)
+                // Byte 1 bit5 = elevated structure (Bridge, Sand, Shoal, Ruins...)
+                // Byte 2 = reserved (always 0)
+                struct terrainFlags_Struct {
+                    // Byte 0
+                    ubyte flag0: 1;
+                    ubyte flag1: 1;
+                    ubyte flag2: 1;
+                    ubyte flag3: 1<comment="Elevated/interior tile">;
+                    ubyte flag4: 1<comment="Road-like surface">;
+                    ubyte flag5: 1<comment="Climbable/special traversal">;
+                    ubyte flag6: 1<comment="Forest-style cover">;
+                    ubyte flag7: 1;
+                    // Byte 1
+                    ubyte flag8: 1<comment="Aquatic/special overlay">;
+                    ubyte flag9: 1;
+                    ubyte flag10: 1;
+                    ubyte flag11: 1<comment="Water/impassable-adjacent">;
+                    ubyte flag12: 1;
+                    ubyte flag13: 1<comment="Elevated structure">;
+                    ubyte flag14: 1;
+                    ubyte flag15: 1;
+                    // Byte 2 (always 0)
+                    ubyte flag16: 1;
+                    ubyte flag17: 1;
+                    ubyte flag18: 1;
+                    ubyte flag19: 1;
+                    ubyte flag20: 1;
+                    ubyte flag21: 1;
+                    ubyte flag22: 1;
+                    ubyte flag23: 1;
+                } terrainFlags<bgcolor=cBlue, name="Terrain Flags">;
+
+            } terrain<read=EnumToString(name)>;
+        }
+    } TerrainData;
+
+    // Section 1: Movement cost lookup (move_type * tile_type)
+    FSeekNextSection(Sections);
+    struct TileTypeMoveCostsTable {
+        DataSection Header;
+        // Each entry = one move type's cost for all 16 tile categories.
+        // Cost 1 = 1 AP, 2 = 2 AP, 255 = impassable.
+        // MoveType entries 10-15 share identical cost tables (unused slots).
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct MoveCostsPerTileTypeEntry {
+                local MoveType MoveTypeName<hidden=true>;
+                MoveTypeName = i;
+
+                ubyte Impassible <comment="TileType 0: always 255">;
+                ubyte FlierOnly <comment="TileType 1: always 255 (non-fliers)">;
+                ubyte NormalCost <comment="TileType 2: always 1">;
+                ubyte Forest <comment="TileType 3">;
+                ubyte DesertBeach <comment="TileType 4">;
+                ubyte ThicketElement <comment="TileType 5">;
+                ubyte ShoalSnow <comment="TileType 6">;
+                ubyte uNoCav3Inf <comment="TileType 7 (unused)">;
+                ubyte uThief3NoCavInf <comment="TileType 8 (unused)">;
+                ubyte FlameSwampCrater <comment="TileType 9">;
+                ubyte SpecialTiles <comment="TileType 10">;
+                ubyte Stairs <comment="TileType 11">;
+                ubyte Wasteland <comment="TileType 12">;
+                ubyte uInvalid13 <comment="TileType 13 (always 0)">;
+                ubyte uInvalid14 <comment="TileType 14 (always 0)">;
+                ubyte uInvalid15 <comment="TileType 15 (always 0)">;
+
+            } MoveCostsPerTileType<read=EnumToString(MoveTypeName)>;
+        }
+    } TileTypeMoveCostsT;
+
+    // Section 2: Per-scenario key tile coordinate lists
+    FSeekNextSection(Sections);
+    struct ScenarioKeyTilePositionsTable {
+        DataSection Header;
+        // Each entry = up to 10 (X, Y) tile coordinate pairs for one scenario.
+        // 0xFF in either coordinate = null / unused slot.
+        // These mark key positions on the battle map per scenario: likely
+        // used as camera focus tiles, objective markers, or trigger positions
+        // for scripted events (BSI dialogue, turn-start camera pans, etc.).
+        // 41 of 60 entries have at least one valid pair; 19 are all-null.
+        for (i = 0; i < Header.NumEntries; i++) {
+            struct ScenarioKeyTilePositionsEntry {
+                local MapList MapName<hidden=true> = i;
+
+                // X tile coordinates (0-based, 0xFF = unused slot)
+                struct XCoordList {
+                    for (j = 0; j < 10; j++)
+                        ubyte X<comment="0xFF = unused">;
+                } XCoords;
+
+                // Y tile coordinates (paired with XCoords at same index)
+                struct YCoordList {
+                    for (j = 0; j < 10; j++)
+                        ubyte Y<comment="0xFF = unused">;
+                } YCoords;
+
+            } entry<read=EnumToString(MapName)>;
+        }
+    } ScenarioKeyTilePositions;
+
+} File<open=true>;

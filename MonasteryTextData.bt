@@ -1,7 +1,7 @@
 //------------------------------------------------
 //--- 010 Editor v14.0 Binary Template
 //
-//      File: Starts at 9051.bin
+//      File: Starts at 9051.bin (vmes_param dat files)
 //   Authors: 
 //   Version: 
 //   Purpose: 
@@ -11,14 +11,38 @@
 //   History: 
 //------------------------------------------------
 #include "include_Enums.bt"
+
+// Enums
+typedef enum <short> {
+    Vmes_Both = 0,
+    Vmes_MaleByleth_Only = 10,
+    Vmes_FemaleByleth_Only = 20
+} enumBylethGender;
+
+typedef enum <short> {
+    Vmes_Always = 0,
+    Vmes_FirstTimeOnly = 10,
+    Vmes_AfterFirstTime = 20
+} enumVmesConditional;
+
+typedef enum <short> {
+    Vmes_Neutral = 0,
+    Vmes_Happy = 1,
+    Vmes_Angry = 2,
+    Vmes_Disappointed = 3,
+    Vmes_Shocked_ClosedMouth = 4,
+    Vmes_Blushing = 5,
+    Vmes_Shocked_OpenMouth = 6
+} enumVmesPortraitExpr;
+
 struct MonasteryDialogueData {
-    short ConversationIndex<bgcolor=cGreen>;
-    short unk0;
-    short unk1;
-    short unk2;
+    short VmesBlockID<bgcolor=cGreen>;
+    enumBylethGender BylethGender<bgcolor=cWhite,comment="0: Both_0; 10: MaleOnly_10; 20: FemaleOnly_20">;
+    enumVmesConditional DialogueConditional1<bgcolor=cDkYellow,comment="0: Always_0; 10: FirstTimeOnly_10; 20: AfterFirstTime_20">;
+    enumVmesConditional DialogueConditional2<bgcolor=cYellow,comment="0: Always_0; 10: FirstTimeOnly_10; 20: AfterFirstTime_20">;
     CharID ID<bgcolor=cBlue>;
-    ushort Voice<bgcolor=cRed>;
-    short Expression;
+    ushort VoiceLineID<bgcolor=cRed>;
+    enumVmesPortraitExpr PortraitExpression;
     short animation<name="Possible Animation?">;
 };
 local int nblocks = FileSize() / 16;

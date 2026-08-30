@@ -1,50 +1,75 @@
 //------------------------------------------------
-//--- 010 Editor v15.0.2 Binary Template
+//--- 010 Editor v14.0 Binary Template
 //
 //      File: 37.bt
-//   Authors: Reichard
-//   Version: 1.0
-//   Purpose: Parse 37.bin which was never updated
-//  Category: Reichard
+//   Authors: Reichard, niltwill
+//   Version: 2.3
+//   Purpose: Parse 37.bin (file index 0x25) - voice partner greeting positions
+//  Category: FE3H
 // File Mask: *37.bin
-//  ID Bytes: 
-//   History: 
-//   1.0    09/10/25 ReichardTheThird: Started this
+//  ID Bytes:
+//   History:
+//   2.0  Aug 2026: Field names decoded from RE of 0x71001D3720
+//   1.0  09/10/25 ReichardTheThird: Started this
 //------------------------------------------------
-#include "Structs.bt"
 
 LittleEndian();
-local int i=0;
 
-struct sUnkD{
-	ushort unkShort2F0x0_A;
-	ushort MonasteryXPos;
-	ushort MonasteryYPos;
-	ushort unkShort2F0x6_A;
-	ushort unkShort2F0x8_A_Z;
-	ushort unkShort2F0xa_B;
-	ushort unkShort2F0xc_C;
-	ushort unkShort2F0xe_C;
-	ushort unkShort2F0x10_D;
-	ushort unkShort2F0x12_E;
-	ushort unkShort2F0x14_D;
-	ushort unkShort2F0x16_E;	
-	TrueFalse enabled<name="enabled?">;
-	byte unkByte2F0x19_Rotation<name="Rotation Octant">;
-	byte unkByte2F0x1a;
-	byte unkByte0x1b;
-	short unkShort0x1c;
-};
+struct sFileHeader {
+    uint NumSections <bgcolor=cDkGray, name="NumSections">;
+    uint SectionOffset <bgcolor=cDkGray, name="Section 0 Offset", format=hex>;
+    uint SectionSize <bgcolor=cDkGray, name="Section 0 Size">;
+} FileHeader <name="File Header">;
 
-struct sUnkE{
-	DataSection Header;
-	for(i=0;i<Header.NumEntries;i++)
-		sUnkD asdf;
-};
+FSeek(FileHeader.SectionOffset);
+struct sSectionHeader {
+    uint Magic <bgcolor=cRed, name="Magic", format=hex>;
+    int  NumEntries <bgcolor=cBlue, name="NumEntries">;
+    int  EntrySize <bgcolor=cGreen, name="EntrySize">;
+    int  Padding[13]<bgcolor=cBlack, name="Padding", hidden=true>;
+} SectionHeader <name="Section Header">;
 
-struct freeScenario {
-	FileSections Sections;
-	
-	FSeekNextSection(Sections);
-	sUnkE Unk;    
-}File<open=true>;
+local int NUM_ENTRIES = SectionHeader.NumEntries;
+
+typedef enum <ubyte> {
+    Rot_RightUp = 0,
+    Rot_UpRight = 1,
+    Rot_Up = 2,
+    Rot_UpLeft = 3,
+    Rot_Left = 4,
+    Rot_DownLeft = 5,
+    Rot_Down = 6,
+    Rot_DownRight = 7
+} NPCRotation;
+
+string EntryRead(struct sEntry &e) {
+    if (!e.enabled || e.npc_world_X == 0)
+        return "(empty)";
+    local string s;
+    SPrintf(s, "NPC=(%d,%d) h=%d  facing=%d  angle=%d",
+            e.npc_world_X, e.npc_world_Z, e.npc_world_Y,
+            (int)e.npc_facing, (int)e.camera_angle_approx);
+    return s;
+}
+
+typedef struct {
+    ushort camera_A_approach_X <comment="Camera/approach X for group A">;
+    ushort npc_world_X <comment="NPC spawn world X; != 0 activates slot">;
+    ushort npc_world_Z <comment="NPC spawn world Z (engine Z)">;
+    ushort camera_A_approach_Z <comment="Camera/approach Z for group A">;
+    ushort npc_world_Y <comment="NPC spawn world Y height">;
+    ushort camera_B_X <comment="Camera B position X">;
+    ushort camera_C_X <comment="Camera C position X">;
+    ushort camera_C_Z <comment="Camera C position Z">;
+    ushort camera_D_X <comment="Camera D position X">;
+    ushort camera_E_X <comment="Camera E position X">;
+    ushort camera_D_Z <comment="Camera D position Z">;
+    ushort camera_E_Z <comment="Camera E position Z">;
+    ubyte enabled <comment="1=active slot, 0=unused">;
+    NPCRotation npc_facing <comment="NPC facing direction 0-7">;
+    ubyte unk_camera_param_A <comment="Camera angle param, role unknown">;
+    ubyte unk_camera_param_B <comment="Camera angle param, role unknown">;
+    short camera_angle_approx <comment="Camera angle approx degrees (70-138)">;
+} sEntry <read=EntryRead>;
+
+sEntry Entries[NUM_ENTRIES] <optimize=false, name="Voice Partner Entries">;

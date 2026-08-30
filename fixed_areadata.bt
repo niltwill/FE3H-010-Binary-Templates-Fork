@@ -1,96 +1,265 @@
 //------------------------------------------------
-//--- 010 Editor v15.0.2 Binary Template
+//--- 010 Editor v13.0.1 Binary Template
 //
-//      File: fixed_areadata.bin
-//   Authors: Reichard
-//   Version: 1.0
-//   Purpose: parse areadata
-//  Category: Reichard
-// File Mask: *fixed_areadata.bin
-//  ID Bytes: 
-//   History: 
-//   1.0    6/10/25 ReichardTheThird: 
+//      File: fixed_areadata.bt
+//   Authors: Reichard, niltwill
+//   Version: 1.1
+//   Purpose: FE3H fixed_areadata.bin - Monastery zone/area layout data
+//  Category: Game Data
+// File Mask: fixed_areadata.bin
+//   History:
+//     1.0 - Reichard: initial unknown fields
+//     1.1 - Thomas: reverse engineered fields; zone math + OBJD cross-reference
 //------------------------------------------------
-#include "Structs.bt"
+
+// Defines the monastery's logical zone layout: which activities happen where,
+// which BGM plays per area, and the spatial rectangles used for "is player in zone X?" runtime checks.
+// Corrupting this file causes the monastery to disappear, since zone data drives
+// NPC placement, BGM selection, and 3D scene object activation.
+
 LittleEndian();
-local int i;
-struct GenericFile {
-    FileSections Sections;
-    
-    FSeekNextSection(Sections);
-    struct sunkTable0{ //0
-        DataSection Header;
-        for(i=0;i<Header.NumEntries;i++){
-            struct sunkEntry0{
-                ushort someShort0x0;
-                ubyte someIndex;
-                ubyte unkByte0x3;
-                
-                ubyte unkByte0x4;
-                ubyte unkByte0x5;
-                ubyte unkByte0x6;
-                ubyte unkByte0x7;
-                
-                ubyte unkByte0x8;
-                ubyte unkByte0x9;
-            }unkEntry0;   
-        };
-        byte padding[2]<hidden=true>;
-    }unkTable0;
-    
-    FSeekNextSection(Sections);
-    struct sunkTable1{ //1
-        DataSection Header;
-        for(i=0;i<Header.NumEntries;i++){
-            struct sunkEntry1{
-                ubyte unkByte0x0;
-                ubyte unkByte0x1;
-                ubyte unkByte0x2;
-                ubyte unkByte0x3;
-                
-                ubyte unkByte0x4;
-                ubyte unkByte0x5;
-                ubyte unkByte0x6;
-                ubyte unkByte0x7;
-            }unkEntry1;   
-        };
-    }unkTable1;
-    
-    FSeekNextSection(Sections);
-    struct sunkTable2{ //2
-        DataSection Header;
-        for(i=0;i<Header.NumEntries;i++){
-            struct sunkEntry2{
-                ubyte unkByte0x0;
-                ubyte unkByte0x1;
-                ubyte unkByte0x2;
-                ubyte unkByte0x3;
-                
-                uint unkInt0x4;
-                
-                ubyte someIndex;
-                ubyte unkByte0x9;
-                ubyte unkByte0xa;
-                ubyte unkByte0xb;
-            }unkEntry2;
-        };
-    }unkTable2;
-    
-    FSeekNextSection(Sections);
-    struct sunkTable3{ //3
-        DataSection Header;
-        for(i=0;i<Header.NumEntries;i++){
-            struct sunkEntry3{
-                ubyte unkByte0x0;
-                ubyte unkByte0x1;
-                ubyte unkByte0x2;
-                ubyte unkByte0x3;
-                
-                ubyte unkByte0x4<name="index?">;
-                ubyte unkByte0x5;
-                ubyte unkByte0x6;
-                ubyte unkByte0x7;
-            }unkEntry3;   
-        };
-    }unkTable3;
-}File<open=true>;
+
+typedef struct {
+    uint32 section_count <name="Section Count", comment="Always 4">;
+    uint32 header_size <name="Header Size", comment="Always 0x24 (36 bytes)">;
+    uint32 sec0_data_size <name="Sec0 Data Size", comment="Bytes in sec0 (sub-hdr + entries). Sec0 ends at header_size + sec0_data_size.">;
+    uint32 sec1_abs_start <name="Sec1 Abs Offset", comment="File offset of sec1 sub-header. May be sec0_end + 2 (alignment pad).">;
+    uint32 sec1_data_size <name="Sec1 Data Size">;
+    uint32 sec2_abs_start <name="Sec2 Abs Offset">;
+    uint32 sec2_data_size <name="Sec2 Data Size">;
+    uint32 sec3_abs_start <name="Sec3 Abs Offset">;
+    uint32 sec3_data_size <name="Sec3 Data Size", comment="sec3_abs_start + sec3_data_size = EOF">;
+} GlobalHeader <name="Global Header", bgcolor=cLtGray>;
+
+typedef struct {
+    uint32 magic <name="Magic", format=hex, comment="Always 0x16121900">;
+    uint32 entry_count <name="Entry Count">;
+    uint32 entry_stride <name="Entry Stride", format=hex>;
+    byte padding[52] <name="Padding", hidden=true, comment="Always zero">;
+} SubHdr <name="Sub-Header", bgcolor=cLtYellow>;
+
+// Enums
+typedef enum <ubyte> {
+    Wandering_NPCRoam_0 = 0,
+    UnkOutdoor_3 = 3,
+    Garden_5 = 5,
+    TrainingGrounds_6 = 6,
+    Greenhouse_7 = 7,
+    Greenhouse_8 = 8,
+    Fishing_PlusOutdoorDLC_9 = 9, // Cindered Shadows DLC area, also needs the outdoor unlock
+    Sauna_10 = 10,
+    Fishing_PlusOutdoorDLC_11 = 11,
+    Fishing_PlusOutdoorDLC_12 = 12,
+    DiningHall_13 = 13,
+    Sauna_14 = 14,
+    Fishing_PlusOutdoorDLC_15 = 15,
+    Unused_AlwaysSkipped_16 = 16,
+    PreSwitchOnly_18 = 18, // hidden during White Clouds / shown on all post-timeskip routes
+    Abyss_26 = 26
+} enumActivityType;
+
+typedef enum <ubyte> {
+    Null = 99,
+    Global = 100
+} enumZoneIndex;
+
+typedef enum <ubyte> {
+    Navigation_Only = 0,
+    NPC_Activities_Supported = 1
+} enumHasActivities;
+
+typedef enum <ubyte> {
+    No = 0,
+    Yes = 1
+} enumWarpAccessible;
+
+typedef enum <ubyte> {
+    GlobalOrSpecial_0 = 0,
+    Main_1 = 1,
+    Upper_2 = 2,
+    HighOrCathedral_3 = 3
+} enumAreaGroup;
+
+typedef enum <ubyte> {
+    PersonalQuarters = 0,
+    Dedue_Room = 1,
+    Ashe_Room = 2,
+    Ignatz_Room = 3,
+    Raphael_Room = 4,
+    Linhardt_Room = 5,
+    Petra_Room = 6,
+    Dorothea_Room = 7,
+    Bernadetta_Room = 8,
+    Annette_Room = 9,
+    Mercedes_Room = 10,
+    Lysithea_Room = 11,
+    Leonie_Room = 12,
+    Sylvain_Room = 13,
+    Dimitri_Room = 14,
+    Felix_Room = 15,
+    Claude_Room = 16,
+    Lorenz_Room = 17,
+    Ferdinand_Room = 18,
+    Caspar_Room = 19,
+    Hubert_Room = 20,
+    Edelgard_Room = 21,
+    Hilda_Room = 22,
+    Marianne_Room = 23,
+    Ingrid_Room = 24,
+    Captains_Quarters = 25,
+    Marketplace = 26,
+    Outside_My_Room = 27,
+    Courtyard = 28,
+    BulletinBoard_OfficersAcademy = 29,
+    BulletinBoard_ThroneRoom = 30,
+    BulletinBoard_CardinalsRoom = 31,
+    Outside_OfficersAcademy = 32,
+    Cathedral = 33,
+    ReceptionHall = 34,
+    Dormitory_1stFloor = 35,
+    Dormitory_2ndFloor = 36,
+    EntranceHall = 37,
+    DiningHall = 38,
+    Stable = 39,
+    FishingPond = 40,
+    Greenhouse = 41,
+    KnightsHall = 42,
+    AudienceChamber = 43,
+    Library = 44,
+    Seteth_Office = 45,
+    CardinalsRoom = 46,
+    CrestScholarOffice = 47,
+    Infirmary = 48,
+    CommonRoom = 49,
+    AdvisoryRoom = 50,
+    StarTerrace = 51,
+    Sauna = 52,
+    Cathedral_PostTS = 53,
+    ReceptionHall_PostTS = 54,
+    OfficersAcademy = 55,
+    Dormitory = 56,
+    DiningHall_Alt = 57,
+    KnightsHallAndStable = 58,
+    EntranceHall_Alt = 59,
+    Marketplace_Alt = 60,
+    GreenhouseAndFishingPond = 61,
+    TrainingGrounds = 62,
+    AreaNotIncludingMarket = 63,
+    Cemetery = 64,
+    Graveyard = 65,
+    ArchbishopRoom = 66,
+    BlackEagle_Classroom = 67,
+    BlueLion_Classroom = 68,
+    GoldenDeer_Classroom = 69,
+    Placeholder70 = 70,
+    Dormitory_Alt = 71,
+    FishingPond_Alt = 72,
+    Unnamed73 = 73,
+    Unnamed74 = 74,
+    Unnamed75 = 75,
+    Unnamed76 = 76,
+    Unnamed77 = 77,
+    Unnamed78 = 78,
+    Unnamed79 = 79,
+    Unnamed80 = 80,
+    Unnamed81 = 81,
+    Unnamed82 = 82,
+    Unnamed83 = 83,
+    Unnamed84 = 84,
+    AshenWolves_Classroom = 85,
+    WomenQuarters = 86,
+    MenQuarters = 87,
+    ScrapHeap = 88,
+    Wayseer_Room = 89,
+    PaganAltar = 90,
+    BurrowStreet = 91,
+    ShadowLibrary = 92,
+    WiltingRoseInn = 93,
+    Unnamed94 = 94,
+    Unnamed95 = 95,
+    Unnamed96 = 96,
+    Unnamed97 = 97,
+    Unnamed98 = 98,
+    Unnamed99 = 99,
+    Inactive = 255
+} enumMonasteryRoom;
+
+// Activity Zone - 37 entries. Two special "global meta" entries (area_group=0, activity_type=12)
+// precede the 35 area zone records. u16_0 is a G1M model ID for the zone's
+// collision geometry, cross-referenced against OBJD GIMD tables (confirmed for
+// entries 0 -> g1mID 108, 1 -> g1mID 112, and several others in 779–881.bin range).
+typedef struct {
+    uint16 g1m_id <name="G1M ID / Zone Cap", comment="G1M model ID for zone collision geometry (cross-refs OBJD GIMD table). Entries 0/1 confirmed as g1mID 108/112. Value 1 = null zone.">;
+    enumZoneIndex zone_index <name="Zone Index", comment="References section 2 by its zone_index field. 99=null, 100=global (entries 0-1).">;
+    enumActivityType activity_type <name="Activity Type", comment="Zone activity type. Fishing_PlusOutdoorDLC_9/11/12/15 = Cindered Shadows DLC area, also needs the outdoor unlock, PreSwitchOnly_18 = hidden during White Clouds / shown on all post-timeskip routes, 16=null/unused">;
+    ubyte is_primary <name="Is Primary Zone", comment="1=primary activity zone (where NPCs gather). 0=secondary/transition zone.">;
+    enumAreaGroup area_group <name="Area Group", comment="Tier grouping">;
+    enumHasActivities has_activities <name="Has Activity Slots", comment="1=zone supports NPC activities. 0=navigation only.">;
+    ubyte flag_b7 <name="Flag B7">;
+    ubyte flag_b8 <name="Flag B8">;
+    enumWarpAccessible is_warp_zone <name="Warp Accessible", comment="1=zone has or is near a warp point.">;
+} Sec0Entry <name="Activity Zone", size=10, bgcolor=cLtBlue>;
+
+// BGM Zone - 30 entries. Active 0-18 map audio IDs to named zone indices matching section 2.
+// Entries 19-29 are null (all zero).
+typedef struct {
+    ubyte audio_id_lo <name="Audio ID Lo", comment="Low byte of audio stream/emitter ID for this zone.">;
+    ubyte audio_id_hi <name="Audio ID Hi", comment="High byte. Full ID = (audio_id_hi<<8)|audio_id_lo.">;
+    ubyte audio_flag <name="Audio Flag", comment="Usually 0. 6 = alternate audio routing (zones 17-18).">;
+    ubyte pad <name="Padding", hidden=true, comment="Always 0.">;
+    uint32 zone_index <name="Zone Index", comment="Named zone ID 0-18 for active entries. Matches section 2 zone_index.">;
+} Sec1Entry <name="BGM Zone", size=8, bgcolor=cLtGreen>;
+
+// Named Area Spatial Bounds
+// 30 entries. Active zones 0-18 and 21-27. Entries 26-29 are null (zone_index=0).
+// Coordinates are in tile space (world/250 - scene_center).
+// Note: axis order matches Section 3 - first pair = Z axis, second pair = X axis.
+// Entries 12-15 have large bit-pattern values that may be permission flags
+// rather than tile coordinates. Entries 16-18 may use signed offsets.
+typedef struct {
+    uint16 bound_z_a <name="Z Bound A", comment="First Z tile bound (zone spans min..max of the two Z values).">;
+    uint16 bound_x_a <name="X Bound A", comment="First X tile bound.">;
+    uint16 bound_z_b <name="Z Bound B", comment="Second Z tile bound.">;
+    uint16 bound_x_b <name="X Bound B", comment="Second X tile bound.">;
+    ubyte zone_index <name="Zone Index", comment="Named zone ID (0-27). Sequential. Cross-refs sec0.zone_index and sec1.zone_index.">;
+    ubyte pad[3] <name="Padding", hidden=true, comment="Always 0.">;
+} Sec2Entry <name="Area Bounds", size=12, bgcolor=cLtRed>;
+
+// Point Zone Check Slot
+typedef struct {
+    uint16 bound_large <name="Large Bound", comment="Larger of the two primary zone bounds. Acts as the X-axis upper limit in Zone_ContainsPosition (range with b4|(b5<<8)). Tile_X = world_X/250 - scene_center_X.">;
+    uint16 bound_small <name="Small Bound", comment="Smaller paired bound. Acts as the Z-axis ceiling in Zone_ContainsPosition (lower Z = 0). Tile_Z = world_Z/250 - scene_center_Z.">;
+    enumMonasteryRoom slot_index <name="Slot Index (Room ID + Lower X Bound)", comment="Self-referential slot ID 0-99 (0xFF=inactive). Also the lower X bound: u16_2=slot_index|(zone_type<<8). Also the argument for the room name. Slots 0-52=pre-TS monastery, 53-84=post-TS areas, 85-93=Abyss(CS).">;
+    ubyte zone_type <name="Zone Type", comment="Zone type 0-4. Contributes to lower X bound: u16_2 = slot_index|(zone_type<<8). Also used as scene accessibility hint by loader to generate runtime byte[8] zone_accessibility_flags (bit0=CS scene 0x3C, bit1=regular scene 0x37).">;
+    ubyte ero_a <name="Zero (hard lower bound)", hidden=true, comment="Always 0 in file. Forms u16_3=0 = hard lower limit of Z axis.">;
+    ubyte zero_b <name="Zero (padding)", hidden=true, comment="Always 0 in file. Loader appends zone_accessibility_flags at byte[8] and room_icon at byte[9] at runtime.">;
+} Sec3Entry <name="Zone Slot", size=8, bgcolor=cLtPurple>;
+// Runtime note: loader expands to >=10 bytes:
+//   byte[8] = zone_accessibility_flags (bit0=CS/0x3C, bit1=regular/0x37)
+//   byte[9] = room icon sprite ID offset (slot_index + 0xF776)
+
+// Important: Sections are not strictly contiguous.
+// Section 0 ends at 0x1D6 but Section 1 starts at 0x1D8 (2-byte alignment gap).
+// Always FSeek to the stored absolute offsets from the global header.
+
+GlobalHeader hdr;
+
+// Section 0 - always starts at header_size (= 0x24)
+FSeek(hdr.header_size);
+SubHdr sub0 <name="Sec0 Sub-Header">;
+Sec0Entry sec0[sub0.entry_count] <name="Activity Zones", optimize=false>;
+
+// Section 1 - use stored abs_start (skips the 2-byte alignment pad after sec0)
+FSeek(hdr.sec1_abs_start);
+SubHdr sub1 <name="Sec1 Sub-Header">;
+Sec1Entry sec1[sub1.entry_count] <name="BGM Zones", optimize=false>;
+
+// Section 2
+FSeek(hdr.sec2_abs_start);
+SubHdr sub2 <name="Sec2 Sub-Header">;
+Sec2Entry sec2[sub2.entry_count] <name="Area Bounds", optimize=false>;
+
+// Section 3
+FSeek(hdr.sec3_abs_start);
+SubHdr sub3 <name="Sec3 Sub-Header">;
+Sec3Entry sec3[sub3.entry_count] <name="Zone Slots", optimize=false>;
