@@ -3,7 +3,7 @@
 //
 //      File: nx/stage/obj/*.bin [779-881]
 //   Authors: Greenf1re, Joschka, niltwill
-//   Version: 3.0
+//   Version: 3.1
 //   Purpose: Object placement + GIMD (Game Item Model Data?) in FE3H
 //------------------------------------------------
 #include "G1SharedStructures.bt"
@@ -13,12 +13,12 @@ LittleEndian();
 
 // GIMD
 typedef struct GIMDTOPHEADER {
-    int sectionCount; // Always 2 (header + entry section)
-    int headerSize; // Always 32
-    int unkPointer; // Offset to a GIMD-related(?) section (after OBJD section)
-    int entryPointer; // unkPointer + headerSize
-    int sectionSize; // From entryPointer to EOF (minus headerSize)
-    byte padding[12];
+    int sectionCount; // always 2 (header + entry section)
+    int headerSize;   // always 32
+    int sizeWithoutHeader;
+    int sizeWithHeader; // absolute offset of DMIG block (headerSize + sizeWithoutHeader)
+    int gimdBlockSize;  // size from sizeWithHeader to EOF
+    byte reserved[12];  // padding
 } GIMDTopHeader <bgcolor=cLtYellow, name="GIMD_Header">;
 
 typedef struct GIMD_UNK_SECTION {
@@ -43,11 +43,6 @@ typedef struct GIMDENTRYPAIR { // these two are only guesses based on the OBJD s
     short g1mID <name="g1m model ID?">;
     short modelTag <name="modelTag?">; // value is between 0-4 only, so far
 } GIMDEntryPair <name="GIMD_Entries">;
-
-typedef struct GIMDFOOTERPAIR { // probably the same as GIMDEntryPair (with the highest possible or dummy values?)
-    short g1mID <name="g1m model ID?">;
-    short modelTag <name="modelTag?">;
-} GIMDFooterPair <bgcolor=cLtGray, name="GIMD_Footer">;
 
 
 // OBJD
@@ -131,7 +126,7 @@ typedef struct SECTION3ENTRY
     short section1_ID; // seems related to sec1.textureH
     int unk6; // unk6,7,8 are probably nothing
     int unk7;
-    int unk8;    
+    int unk8;
 } Section3Entry<size=0x50, optimize=false>;
 
 typedef struct SECTION (int s0C, int s1C, int s2C, int s3C){
@@ -160,17 +155,40 @@ typedef struct SECTION (int s0C, int s1C, int s2C, int s3C){
 struct FILE {
     GIMDTopHeader gimdTop;
     Header header;
+
+    if (gimdTop.sizeWithHeader != gimdTop.sizeWithoutHeader + gimdTop.headerSize)
+        Warning("GIMD header size fields are inconsistent.\n");
+
+    if (FileSize() != gimdTop.sizeWithHeader + gimdTop.gimdBlockSize)
+        Warning("File size does not match GIMD header sizes.\n");
+
+    if (header.sectionCount != 3)
+        Warning("OBJD sectionCount is %d; this template assumes 3 for sections 0..3.\n", header.sectionCount);
+
     Section section(header.section0EntryCount,header.section1EntryCount,header.section2EntryCount,header.section3EntryCount) [header.sectionCount+1] <optimize=false>;
 
-    FSeek(gimdTop.unkPointer);
-    GimdUnkSection gimdUnkSection; // don't know what this is for, maybe it's mainly for the map ID and to know what was the data of the last entry?
+    // After the OBJD sections, we should be exactly at the DMIG block
+    if (FTell() != gimdTop.sizeWithHeader)
+        Warning("OBJD sections ended at 0x%X, but GIMD header says DMIG starts at 0x%X.\n", FTell(), gimdTop.sizeWithHeader);
 
-    FSeek(gimdTop.entryPointer);
+    FSeek(gimdTop.sizeWithHeader);
     GIMDSectionHeader gimdEntryHeader;
+    local int GIMD_FOOTER_SIZE = 16;
 
     // this is not always the same value as in the header's sectionSize
-    local int entriesCount = (gimdTop.sectionSize - sizeof(gimdEntryHeader) - 16) / 4;
+    local int entriesSize = gimdTop.gimdBlockSize - sizeof(gimdEntryHeader) - GIMD_FOOTER_SIZE;
+
+    if (entriesSize < 0 || (entriesSize % 4) != 0)
+        Warning("GIMD block size does not divide cleanly into 4-byte entries.\n");
+
+    local int entriesCount = entriesSize / 4;
+
     GIMDEntryPair gimdEntries[entriesCount];
 
-    GIMDFooterPair gimdFooter[4]; // always seems to be: D2 02 96 49 * 4
+    // Footer always observed as D2 02 96 49 repeated four times.
+    byte gimdFooter[GIMD_FOOTER_SIZE] <name="GIMD_Footer">;
+
+    if (FTell() != FileSize())
+        Warning("GIMD block parsed to 0x%X, but file size is 0x%X.\n", FTell(), FileSize());
+
 } File <name="OBJD file", open=true>;

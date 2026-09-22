@@ -13,6 +13,29 @@
 //   1.1    06/07/25 ReichardTheThird: Added BattalionReserve @ 0x250f8
 //                                      Changed to use "include_enums.bt" instead
 //   1.0    02/16/25 ReichardTheThird: Started taking over maintainance and updates from previous authors
+//
+//  PER-SAVE EVENT FLAGS (Flags_271[])
+//    The flag bitfield covers 2187 event flags (0..2186). 2187 bits = 274 bytes needed.
+//    The template declares 271 bytes, covering flags 0..2167 (flags 2168..2186 are likely unused).
+//    Key positions within Flags_271[N]:
+//      Flags 0-249  (bytes 0-31):  gameplay event flags (quests, dialogue, paralogue states)
+//      Flags 250-263 (bytes 31-32): scenario completion — formula: flag = 250 + ScenarioNum
+//        Flags_271[31] bit 2 = Flag 250 = Prologue complete
+//        Flags_271[32] bit 7 = Flag 263 = Ch13 Hunting by Daybreak
+//      Flags 264-310 (bytes 33-38): post-timeskip chapters + all paralogues (RE-predicted)
+//        Flags_271[34] bit 4 = Flag 276 = VW Ch21 Shambhala (Stand Strong at Shambhala)
+//        Flags_271[35] bit 7 = Flag 287 = CF Ch18 (final CF chapter)
+//        Flags_271[38] bit 6 = Flag 310 = Alois Paralogue (last base-game paralogue)
+//      Flags 311-317 (byte 38-39): CS Chapters 1-7 (aux map ScenarioNums 61-85 are skipped)
+//        Flags_271[38] bit 7 = Flag 311 = CS Ch1 complete
+//        Flags_271[39] bit 5 = Flag 317 = CS Ch7 complete
+//      Flags 2050    (byte 256 bit 2): this save IS an NG+ file
+//      Flags 1904    (byte 238 bit 0): Maddening completed on NG+ (hypothesis)
+//      Auto-set at timeskip (by Save_ApplyTimeskipSetup):
+//        21, 24, 26-30, 32, 34, 35, 37, 41, 42, 81, 82, 201
+//      DLC character support enables: 207=Yuri, 208=Balthus, 209=Constance, 210=Hapi
+//      Flag 205 = Pagan Altar renown dialogue variant (Pagan Altar overflow bug)
+//      Flag 160 = Amiibo Gazebo Note acknowledged
 //------------------------------------------------
 #include "Structs.bt"
 #include "saveEntry_structs.bt"
@@ -105,15 +128,16 @@ struct CharacterBlock {
 struct SaveHeader {
 	int value;
 	int version;
-	int hash;
-}header;
+	int hash<comment="8-bit checksum: hash = (sum_of_all_data_bytes & 0xFF) stored as uint32. Only the low byte is meaningful. System file uses a full 32-bit CRC instead.">;
+} header;
+
 ItemBlock items[400]<name="Items">;
 int item_count;
 CharacterBlock character[60]<read=EnumToString(ID)>;
 char PlayerName[40];
 byte unkByte0x903c;
-Month BylethBirthMonth<comment="the Month is 0 indexed, i.e. 0 = January (1st month)">;
-byte BylethBirthDay;
+Month BylethBirthMonth<comment="0-indexed (0=GreatTreeMoon/January).">;
+byte BylethBirthDay<comment="1-indexed day of month. Used together with BylethBirthMonth in the birthday celebration event trigger.">;
 
 
 FSeek(0x23200-0x1b);
@@ -129,15 +153,15 @@ struct sPlayerData{
 	uint Playtime;
 	uint Money;
 	uint unkownInt0x1078;
-	uint Chapter;
+	uint Chapter<comment="Chapter progression counter (g_SaveState+0x2427C). Capped at 0x16 (22). Matches ChapterNum in SaveFileInfo (displayed on save select screen).">;
     sSupportExp SupportExp;
-	Difficulty DifficultyLevel;
+	Difficulty DifficultyLevel<comment="Difficulty: 0=Normal, 1=Hard, 2=Maddening. Affects renown granted per chapter: Normal+3000, Hard+6000, Maddening+9000 (cap 999999).">;
 	ubyte GameMode;
-	ubyte Route;
-	ubyte Timeskip;
-	ScenarioName CurrentScenario;
-	byte MonasteryScriptID;
-	ubyte Flags_271[271];
+	ubyte Route<comment="Route ID (g_SaveState+0x2449E). 0=SilverSnow, 1=WhiteClouds (pre-split), 2=AzureMoon, 3=VerdantWind, 4=CrimsonFlower, 5=CinderedShadows.">;
+	ubyte Timeskip<comment="Post-timeskip flag (g_SaveState+0x2449F). 0=pre-timeskip, 1=post-timeskip.">;
+	ScenarioName CurrentScenario<comment="Current map/scenario ID (g_SaveState+0x244A0). Matches ScenarioName enum; used as index for fixed_scenario data.">;
+	byte MonasteryScriptID<comment="Monastery BSI script index (g_SaveState+0x244A1). -1 (0xFF) = no monastery (skipped). Matches the 'Monastery Script' field in fixed_flow.bin chapters">;
+	ubyte Flags_271[271]<comment="Per-save event flag bitfield (g_SaveState+0x244A2). 2187 total flags (indices 0..2186) = 274 bytes needed; this array covers 271 bytes (flags 0..2167). Flags 2168..2186 are believed unused. Accessed via BSI opcodes 46 (SetFlag) and 128 (CheckFlag). Key ranges: 0-249 = gameplay event flags (quests, dialogue conditions, paralogue states); 250-263 = scenario completion prologue..Ch13 (formula: flag = 250+ScenarioNum); 264-287 = post-timeskip chapters (RE-predicted, ScenarioNum 14-37); 288-310 = paralogue completion (ScenarioNum 38-60); 311-317 = CS Ch1-7 (aux maps ScenarioNum 61-85 skipped, adjusted index); 318+ = CS paralogues/misc; 1904[byte 238 bit 0] = Maddening completed on NG+ (hypothesis); 2050[byte 256 bit 2] = this save is an NG+ file. Auto-set at timeskip: flags 21,24,26-30,32,34,35,37,41,42,81,82,201.">;
 	struct sStorehouseItems{
 		for(i=0;i<223;i++){
 			struct sStorehouseItemsEntry{
@@ -162,7 +186,7 @@ struct sPlayerData{
 		};
 	}LostItemsCount;
 	byte unk0x1571[0x25f];
-	byte GameCompletionCount;
+	byte GameCompletionCount<comment="Number of times the game has been completed on this save (route endings beaten). Distinct from the GlobalFlags RouteClrCounter in the system file, which counts cross-playthrough chapter clears. This per-save byte tracks completions for this save file specifically.">;
 	byte unk0x15d1[3];
 	byte mapRngSeed_;
 	byte unk0x17d5[0x5be];
@@ -182,7 +206,7 @@ struct sPlayerData{
 FSeek(0x250c8-0x1b);
 struct sActivities{
 	byte chicken[0xc];
-	uint Renown;
+	uint Renown<comment="Renown (piety) currency (g_SaveState+0x250D4). Granted after each chapter battle: Normal difficulty: +3000 per chapter, Hard: +6000, Maddening: +9000. Also granted by the Pagan Altar. Hard cap: 999,999">;
 	byte unkActivityBytes0x10[2];
 	ushort ProfessorExp;
 	CharID BylethSupportVisitList_[7];
@@ -251,7 +275,7 @@ struct sActivities{
 	ubyte PlayLog_TeaParty;
 	ubyte PlayLog_Scout;
 	ubyte unk0x568[4];
-	ubyte InfluencerUpgradeLevel;
+	ubyte InfluencerUpgradeLevel<comment="Faculty Training 'Influencer' stat tier (0-3). Level 0=none, 1=base, 2=Influencer Lv2, 3=Influencer Lv3 (max). Corresponds to empiric flags 200=Influencer Perk, 201=Influencer Lv3, 202=Influencer Lv2. Flag 201 is auto-set at timeskip, meaning the S-Support/Ch10 Sothis dialogue variant is also locked to this flag.">;
 	sPaganAltarWeaponShopStock PaganAltarWeaponShopStock;
 	sPaganAltarEquipShopStock PaganAltarEquipShopStock;
 	sPaganAltarItemShopStock PaganAltarItemShopStock;

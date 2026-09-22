@@ -58,6 +58,10 @@ typedef enum <uint32> {
     EmptyString = 9,                   // No strings displayed; monastery fallback (probably unused)
     SelectBattlefield = 10,            // Select Battlefield screen
     ClearedGameData_NGPlus = 11,       // Cleared-Game Data (NG+ state - shows star icon on slot header)
+                                       // RE: ExtrasMenu_InitGoldEffectFlags checks slot type==0xB(11)
+                                       // to enable the gold particle effect on the title screen.
+                                       // Per-save flag 2050 marks this save as an active NG+ file.
+                                       // GlobalFlags bytes 214/236-238 hold the NG+ content unlock bits.
     EmptySlot_Sentinel = 17            // 0x11 = empty slot (unused state)
                                        // 12-16, 18+ = INVALID (corrupted save message, do not use)
 } SaveState_e;
@@ -229,6 +233,11 @@ typedef enum <uint32> {
     Day_None = 255
 } DayNum_e;
 
+typedef enum <uint32> {
+    Female = 0,
+    Male = 1
+} BylethGender_e;
+
 // Display helpers
 
 string FmtPlaytime(uint32 s) {
@@ -305,16 +314,18 @@ typedef struct {
     // Post-timeskip scenarios diverge per-route (see ScenarioNum_e enum).
     ScenarioNum_e ScenarioNum <bgcolor=0xFFE8A0, comment="Which battle map to use. Controls background image. 255=No_Scenario.">;
 
-    // Chapter-progression boolean flags (assumed)
-    // All are 0 or 1 (boolean u32). Best-guess semantics:
-    // unkFlag1: set=1 when State=3 (New Chapter). Hypothesis: SavedAtChapterInit.
-    // unkFlag2: always 1 (both base game and DLC). Hypothesis: SavedDuringChapter.
-    // unkFlag3: unknown when 1 (could be unused, if never set to 1 anywhere).
-    // unkFlag4: unknown when 1 (could be unused, if never set to 1 anywhere).
-    uint32 unkFlag1 <comment="Bool. Set=1 when State=3 (NewChapter). Hypothesis: SavedAtChapterInit.">;
-    uint32 unkFlag2 <comment="Bool. Always=1 (base+DLC). Hypothesis: SavedDuringChapter.">;
-    uint32 unkFlag3 <comment="Bool. Condition for =1 unknown.">;
-    uint32 unkFlag4 <comment="Bool. Condition for =1 unknown.">;
+    // Byleth gender and portrait variant
+    // Confirmed from SaveFileMenu_RenderSlotEntry (FUN_7100645d30):
+    //   BylethGender is read as puVar14[7] and used to select:
+    //     - TextTable(0x175 + BylethGender): 0x175=female label, 0x176=male label
+    //     - Sprite 0x30=female icon, 0x31=male icon
+    //   BylethPortraitVariant is read as puVar14[8] and selects:
+    //     - TextTable 0x17D=female Byleth name, 0x17E=male Byleth name
+    //     - Sprite 0x82A=female Byleth portrait, 0x82B=male Byleth portrait
+    BylethGender_e BylethGender <bgcolor=0xFFE8A0, comment="Byleth gender. 0=Female, 1=Male. Selects gender label (TextTable 0x175/0x176) and gender icon sprite (0x30/0x31).">;
+    BylethGender_e BylethPortraitVariant <bgcolor=0xFFE8A0, comment="Byleth portrait icon variant. 0=Female (sprite 0x82A), 1=Male (sprite 0x82B). Selects Byleth name display (TextTable 0x17D=female / 0x17E=male).">;
+    uint32 unkFlag3 <comment="Unknown. Bool (0 or 1). Condition for =1 unknown.">;
+    uint32 unkFlag4 <comment="Unknown. Bool (0 or 1). Condition for =1 unknown.">;
 
     // Byleth name
     byte PlayerName[40] <bgcolor=0xFFFFB0, comment="Byleth name. Escape-wrapped: 1B 4E 30 [name bytes] 1B 4E 31. 40 bytes max.">;
@@ -339,32 +350,252 @@ typedef struct {
 
 } SaveFileInfo <read=FmtSlot, optimize=false>;
 
+// ============================================================
+//  PER-SAVE EVENT FLAG SYSTEM  (NOT in this file)
+// ============================================================
+//  Each save SLOT file (slot00..slot24, abyss00..ex00) contains
+//  a separate bitfield of 2187 event flags (indices 0..2186),
+//  accessed in BSI scripts via:
+//    opcode  46 = SetEventFlag(index, value)
+//    opcode 128 = CheckEventFlag(index)      [read]
+//    opcode 2070= SetBSIFlag(index, value)
+//    opcodes 1020/1070 = CheckBSIFlag(index) [read]
+//
+//  Those per-save flags are NOT stored here. The GlobalFlags
+//  below (in this system file) track CROSS-PLAYTHROUGH state.
+//  The relationship:
+//    GlobalFlags byte 212 b6-7 / byte 213 b0-1  = routes globally completed
+//    GlobalFlags byte 213 b7, byte 214 b0-2      = endings globally cleared
+//    Per-save flag 2050                           = this save is NG+ mode
+//    Per-save flags 207-210                       = Yuri/Balthus/Constance/Hapi supports enabled
+//    Per-save flags 250+ScenarioNum               = scenario (chapter) completion for THIS run
+//    GlobalFlags bytes 214/236-238                = NG+ content unlock flags (cross-playthrough)
+//
+//  Empirically documented per-save scenario completion flags:
+//    Formula: save flag = 250 + ScenarioNum (for story maps; aux maps ScenarioNum 61-85 SKIPPED)
+//    Confirmed:
+//      250=Prologue  251=Ch1     252=Ch2     253=Ch3     254=Ch4(a)  255=Ch4(b)
+//      256=Ch6       257=Ch7     258=Ch8     259=Ch9     260=Ch10    261=Ch11
+//      262=Ch12      263=Ch13_HuntingByDaybreak
+//    Predicted (RE-derived, ScenarioNum 14-60 → flags 264-310):
+//      264=Ch14_ProtectingGarregMach       265=Ch15_AmbushAtAilell
+//      266=Ch16_GreatBridgeCoup            267=Ch17_Gronder2
+//      268=Ch17_Unused  269=VWCh18_Unused
+//      270=VWCh18_FortMerceus              271=AMCh18_Fhirdiad
+//      272=VWCh19_Enbarr                   273=AMCh19_SavingDerdriu
+//      274=VWCh20_ConfrontationAtPalace    275=AMCh20_FortMerceus
+//      276=VWCh21_Shambhala (The Curse + Resurrection chapter)
+//      277=AMCh21_Enbarr   278=SSCh21_TheFinalBattle
+//      279=VWCh22_Final    280=AMCh22_Final
+//      281=CFCh12  282=CFCh13  283=CFCh14  284=CFCh15
+//      285=CFCh16  286=CFCh17  287=CFCh18
+//      288=RheaParalogue    289=DimitriParalogue  290=EdelgardParalogue
+//      291=ClaudeParalogue  292=SothisParalogue   293=DedueParalogue
+//      294=FelixParalogue   295=AsheParalogue     296=SylvainParalogue
+//      297=MercedesParalogue 298=AnnetteParalogue 299=IngridParalogue
+//      300=HubertParalogue  301=LysitheaParalogue 302=LeonieParalogue
+//      303=PetraParalogue   304=LorenzParalogue   305=IgnatzParalogue
+//      306=MarianneParalogue 307=HildaParalogue   308=SetethParalogue
+//      309=ManuelaParalogue  310=AloisParalogue
+//    Confirmed (CS chapters; adjusted for aux map skip: flag = 250 + ScenarioNum - 25):
+//      311=CSCh1  312=CSCh2  313=CSCh3  314=CSCh4
+//      315=CSCh5  316=CSCh6  317=CSCh7
+//    Predicted (CS paralogues, ScenarioNum 93-98 → flags 318-323):
+//      318=HapiParalogue  319=YuriParalogue  322=AnnaParalogue  323=JeritzaSemilogue
+//      (320, 321 = Dummy95/96 – likely Constance/Balthus paralogues; 324=Dummy99)
+//
+//  Other notable per-save flags:
+//    Flag 2050 = NG+ playthrough marker (this save IS an NG+ file)
+//    Flag 1904 = Maddening completed on NG+ (hypothesis)
+//    Flag  160 = Amiibo Gazebo Note acknowledged
+//    Flag  205 = Pagan Altar renown dialogue variant (Aldebaran bug fix: overflow)
+//    Flags 207-210 = Enable Yuri / Balthus / Constance / Hapi supports
+//    Flags 153-154 = NG+ unit appearance / NG+ renown notification shown
+//    Flags  21, 24, 26-30, 32, 34, 35, 37, 41, 42, 81, 82, 201:
+//           auto-set at timeskip by Save_ApplyTimeskipSetup (called from
+//           MapCompletion_UpdateGameState when scenario data bit6 is set)
+//
+// ============================================================
 // Global flags (0x114 bytes V5 / 0x134 bytes V7)
 //
-//  Confirmed layout (from binary analysis of fresh DLC-only system file):
+//  Layout (all bit positions are offsets within this struct; 'GF byte N' = this[N]):
 //
-//  [0]       SystemByte        1 B  | bit 0 = first-boot/init flag
-//  [1-13]    MovieFlags       13 B  | bits 8-107 = 100 cutscene viewed flags
-//  [14-212]  GameplayFlags   199 B  | bits 112-1703, unknown content flags
-//  [213]     DLC_AckByte       1 B  | bit 6 (0x40) = DLC ownership acknowledged
-//  [214-268] UnknownFlags2    55 B  | bits 1712-2151, unknown
-//  [269-275] DLC_Unlock_V5     7 B  | bits 2152-2207 (also in V5), set 0xFF x7
-//  [276-305] DLC_Unlock_V7    30 B  | bits 2208-2447 (V7 only), set 0xFF x30
-//  [306-307] V7_Padding        2 B  | bits 2448-2463, unused (zero)
+//  [0]       SystemByte          1 B  | system init flag
+//  [1-4]     MovieSeenFlags      4 B  | bits 8-39:  MV0..MV29 seen (30 movies)
+//  [5-13]    NarrationSeenFlags  9 B  | bits 40-111: narrations/events IDs 30..103 seen
+//  [14-155]  EventSeenFlags    142 B  | bits 112-1247: EV cutscene seen flags (IDs 104..1239)
+//                                     |   incl. remapped narrations 0x1CD..0x270 (→ bits 1240-1403)
+//  [156-180] RemappedSeen       25 B  | bits 1248-1447: remapped content IDs (narrations 461..624
+//                                     |   mapped to bits 1240-1403; specials 1309-1328 → 1404-1423)
+//  [181-205] BGMUnlockFlags     25 B  | bits 1448-1647: BGM track unlock (slots 0..199)
+//  [206-208] TalkEventFlags      3 B  | bits 1648-1669: talk event availability (22 types)
+//  [209]     RouteChCleared_Lo   1 B  | bits 1670-1677: route chapter-cleared lo
+//  [210-212] RouteDLCProgress    3 B  | bits 1678-1703: route chapter-cleared hi + DLC chapters
+//  [213]     FlagsAndAck         1 B  | bits 1704-1711: route global completion, DLC ack, ending
+//  [214-267] GameStateFlags     54 B  | bits 1712-2143: ending cleared, NG+ flags, CS progress, etc.
+//  [268]     RouteClrCounter     1 B  | bits 2144-2151: route-cleared byte counter (not a bitfield!)
+//  [269-275] DLC_Unlock_V5       7 B  | bits 2152-2207 (also in V5): set 0xFF x7 to unlock
+//  [276-305] DLC_Unlock_V7      30 B  | bits 2208-2447 (V7 only):   set 0xFF x30 = full CS unlock
+//  [306-307] V7_Padding          2 B  | bits 2448-2463: unused (zero)
 //
-//  To unlock all DLC: set DLC_Unlock_V5 = 0xFF x7 AND DLC_Unlock_V7 = 0xFF x30.
+//  To unlock all DLC: DLC_Unlock_V5 = 0xFF x7  AND  DLC_Unlock_V7 = 0xFF x30.
+//
+//  Bit-to-field key (bitfield bit B = GF byte 1+B/8, bit B%8):
+//    B=0x000..0x01D (0..29)       GF bytes 1-4      MV0..MV29 movie seen
+//    B=0x01E..0x067 (30..103)     GF bytes 4-13     narration IDs 30..103 seen
+//    B=0x068..0x59F (104..1439)   GF bytes 14-180   EV cutscene seen + remapped narrations
+//    B=0x5A0..0x667 (1440..1639)  GF bytes 181-205  BGM track unlock (slot 0..199)
+//    B=0x668..0x67D (1640..1661)  GF bytes 206-208  talk event availability (22 flags)
+//    B=0x686..0x689 (1670..1673)  GF byte 209 b6-7 + 210 b0-1  route chapter-cleared (SS/AM/VW/CF)
+//    B=0x68A..0x69D (1674..1693)  GF bytes 210-212  DLC chapter completion (20 flags, ch 0..19)
+//    B=0x69E..0x6A1 (1694..1697)  GF byte 212 b6-7, 213 b0-1   global route completion (gallery)
+//    B=0x6A2..0x6A3 (1698..1699)  GF byte 213 b2-3  DLC available slots 0-1
+//    B=0x6A4..0x6A5 (1700..1701)  GF byte 213 b4-5  UNKNOWN
+//    B=0x6A6        (1702)        GF byte 213 b6     DLC ownership acknowledged
+//    B=0x6A7..0x6AA (1703..1706)  GF byte 213 b7, 214 b0-2  ending cleared (SS/AM/VW/CF)
+//    B=0x6AB..0x6AC (1707..1708)  GF byte 214 b3-4  NG+ unlock flags A, B
+//    B=0x75F..0x760 (1887..1888)  GF byte 236 b7, 237 b0  NG+ unlock flags C, D
+//    B=0x76C..0x76F (1900..1903)  GF byte 238 b4-7  NG+ unlock flags E-H
+//    GF byte 236 bit 6            CS (Cindered Shadows) route chapter-cleared
+//    GF byte 239 bits 4-7         CS route sub-progress (MapCompletion stages 2-4,6)
+//    GF byte 240 bits 0-1         CS route sub-progress (MapCompletion stages 7-8)
+//    GF byte 268                  route-cleared COUNTER (byte value, not bitfield; written by MapCompletion)
 
 typedef struct {
-    byte SystemByte <bgcolor=0xE0E8FF, comment="Bit 0 (0x01) = global init / first-boot flag. Set on startup.">;
-    byte MovieFlags[13] <bgcolor=0xE0E8FF, comment="Bits 8-107: 100 cutscene unlock flags. Bit i = movie (msgbin 12823+(i-8)) viewed. All zero on fresh file.">;
-    byte GameplayFlags[199] <bgcolor=0xD0ECFF, comment="Bits 112-1703: 1592 unknown gameplay flags. Zero on fresh file. Map via gameplay testing.">;
-    byte DLC_AckByte <bgcolor=0xFFD090, comment="Bit 6 (0x40) = DLC ownership acknowledged (set in fresh DLC file). Other bits unknown.">;
-    byte UnknownFlags2[55] <bgcolor=0xD0ECFF, comment="Bits 1712-2151: 440 unknown flags. Zero on fresh file.">;
-    byte DLC_Unlock_V5[7] <bgcolor=0xFF9840, comment="Bits 2152-2207: base DLC unlock flags (also present in V5). Set all to 0xFF to unlock.">;
+
+    // [0] System byte
+    byte SystemByte <bgcolor=0xE0E8FF,
+        comment="bit 0 (0x01) = global system initialized / first-boot flag.">;
+
+    // [1-4] Movie seen flags — MV0..MV29 (30 movies, 2 unused bits at end)
+    // Byte 1: MV0_Revenge(b0) MV1_Girl_on_Throne(b1) MV2_Winding_Back_Time(b2) MV3_Archbishop(b3)
+    //         MV4_Academy(b4) MV5_Heros_Relic(b5) MV6_Sword_of_Creator(b6) MV7_Black_Beast(b7)
+    // Byte 2: MV8_Battle(b0) MV9_Ball(b1) MV10_At_Deaths_Door(b2) MV11_Trap(b3)
+    //         MV12_Awakening(b4) MV13_Holy_Tomb(b5) MV14_Descent(b6) MV15_Loathing(b7)
+    // Byte 3: MV16_Reunion_AM(b0) MV17_Reunion_SS(b1) MV18_Reunion_VW(b2) MV19_Rematch(b3)
+    //         MV20_Javelins_of_Light(b4) MV21_Death_Flame_Emperor(b5) MV22_The_Curse(b6) MV23_Wailing(b7)
+    // Byte 4: MV24_Citizens_East(b0) MV25_World_Humanity(b1) MV26_Light_Shadow(b2) MV27_New_Dawn(b3)
+    //         MV28_Resurrection(b4) [intentionally excluded from Movie Gallery — design choice, not a bug]
+    //         MV29_Seasons_Warfare(b5) narration_30(b6) narration_31(b7)
+    byte MovieSeenFlags[4] <bgcolor=0xE0E8FF,
+        comment="Movie seen bits: MV0..MV29 (bits 0-29) + narrations 30-31 (bits 30-31).">;
+
+    // [5-13] Narration + early content seen flags (IDs 30..103)
+    // IDs 30..103 = narration chapters and early EV scenes. Bit i (relative to byte 1) = ID i.
+    byte NarrationSeenFlags[9] <bgcolor=0xDDE8FF,
+        comment="Seen flags for content IDs 30..103 (narrations NR_Chapter2..NR_77 and early events). All zero on fresh file.">;
+
+    // [14-180] EV cutscene seen flags (IDs 104..1239) + remapped narration IDs
+    // - IDs 104..460: EV cutscene seen bits (GF bytes 14..58)
+    // - IDs 461..624 are REMAPPED to bits 1240..1403 (GF bytes 156..176) by MainDataTable_SetMovieUnlockBit
+    // - IDs 1309..1328 are remapped to bits 1404..1423 (GF bytes 176..178)
+    // - Bits 1424..1439 (GF bytes 179-180): unknown content, possibly unused padding
+    byte EVCutsceneAndRemappedFlags[167] <bgcolor=0xCCE0FF,
+        comment="EV cutscene seen flags (IDs 104-460, GF bytes 14-58) and remapped content flags (narrations 461-624 → bits 1240-1403, specials 1309-1328 → bits 1404-1423). Zero on fresh file.">;
+
+    // [181-205] BGM track unlock flags (slots 0..199)
+    // Bit layout: BGM slot N -> bitfield bit (0x5A0+N) -> GF byte (181 + N/8), bit (N%8).
+    // DLC BGM IDs 0x1C-0x1D, 0x2C-0x2F, 0xAC-0xAF, 0xF9 additionally check DLC flags.
+    byte BGMUnlockFlags[25] <bgcolor=0xC8F0FF,
+        comment="BGM track unlock bits: slot 0 = byte 181 bit 0 (0x01) through slot 199 = byte 205 bit 7 (0x80). Called from Music Library unlock events. DLC tracks (IDs 0x1C-0x1D, 0x2C-0x2F, 0xAC-0xAF, 0xF9) also need the DLC flags.">;
+
+    // [206-208] Talk event availability flags (22 active type IDs)
+    // Mapped type IDs and their bit positions (within 22-bit range):
+    //   Byte 206: types 2(b0) 4(b1) 6(b2) 8(b3) 10(b4) 12(b5) 14(b6) 16(b7)
+    //   Byte 207: types 18(b0) 24(b1) 26(b2) 159(b3) 160(b4) 161(b5) 162(b6) 163(b7)
+    //   Byte 208: types 164(b0) 165(b1) 166(b2) 167(b3) 168(b4) 169(b5) [bits 6-7 unused]
+    byte TalkEventFlags[3] <bgcolor=0xC0ECFF,
+        comment="Talk event availability flags (22 types). Byte 206: event types 2,4,6,8,10,12,14,16. Byte 207: types 18,24,26,159,160,161,162,163. Byte 208: types 164,165,166,167,168,169 (bits 6-7 unused). DLC types also check DLC.">;
+
+    // [209] Route chapter-cleared flags (low bits) + unknown gap
+    // Bits 0-5 of byte 209 are UNKNOWN (bitfield bits 1662-1667, IDs 0x67E-0x683 gap).
+    // bit 6 (0x40) = SS (Silver Snow) route chapter cleared this playthrough
+    // bit 7 (0x80) = AM (Azure Moon) route chapter cleared this playthrough
+    byte RouteChCleared_Lo <bgcolor=0xE8FFE0,
+        comment="bits 0-5: UNKNOWN gap. bit 6 (0x40) = SS chapter cleared (current playthrough). bit 7 (0x80) = AM chapter cleared (current playthrough).">;
+
+    // [210] VW/CF chapter-cleared + DLC chapter completion 0..5
+    // bit 0 (0x01) = VW (Verdant Wind) chapter cleared this playthrough
+    // bit 1 (0x02) = CF (Crimson Flower) chapter cleared this playthrough
+    // bits 2-7 = DLC chapters 0..5 completed (Cindered Shadows)
+    byte RouteAndDLC_Ch0 <bgcolor=0xE8FFE0,
+        comment="bit 0 (0x01) = VW chapter cleared. bit 1 (0x02) = CF chapter cleared. bits 2-7 (0x04-0x80) = DLC chapters 0-5 completed.">;
+
+    // [211] DLC chapter completion 6..13
+    byte DLC_Ch6_13 <bgcolor=0xE8FFE0,
+        comment="DLC chapters 6-13 completed (bit 0=ch6 through bit 7=ch13). Cindered Shadows progress.">;
+
+    // [212] DLC chapter completion 14..19 + global route completion SS + AM
+    // bits 0-5 = DLC chapters 14..19 completed
+    // bit 6 (0x40) = SS (Silver Snow) globally completed (enables Movie Gallery SS tab)
+    // bit 7 (0x80) = AM (Azure Moon) globally completed (enables Movie Gallery AM tab)
+    byte DLC_Ch14_19_and_RouteGlobal_SS_AM <bgcolor=0xFFE8A0,
+        comment="bits 0-5 (0x01-0x20) = DLC chapters 14-19 completed. bit 6 (0x40) = SS globally completed (Movie Gallery SS tab, cross-playthrough). bit 7 (0x80) = AM globally completed (Movie Gallery AM tab, cross-playthrough).">;
+
+    // [213] Route global completion VW/CF, DLC availability, DLC ack, SS ending
+    // bit 0 (0x01) = VW (Verdant Wind) globally completed (Movie Gallery VW tab)
+    // bit 1 (0x02) = CF (Crimson Flower) globally completed (Movie Gallery CF tab)
+    // bit 2 (0x04) = DLC available slot 0 (controls DLC tab visibility in Extras)
+    // bit 3 (0x08) = DLC available slot 1
+    // bit 4 (0x10) = any route ending cleared (set by SetEndingClearedForRoute for any route)
+    // bit 5 (0x20) = UNKNOWN
+    // bit 6 (0x40) = DLC ownership acknowledged (set on first DLC detection)
+    // bit 7 (0x80) = SS (Silver Snow) final ending cleared (final boss beaten)
+    byte FlagsAndAck <bgcolor=0xFFD090,
+        comment="bit 0 (0x01) = VW globally completed (gallery tab). bit 1 (0x02) = CF globally completed (gallery tab). bit 2 (0x04) = DLC available slot 0. bit 3 (0x08) = DLC available slot 1. bit 4 (0x10) = any ending cleared (g_MainDataTable+0x1199 bit 4). bit 5 (0x20) = UNKNOWN. bit 6 (0x40) = DLC ownership acknowledged. bit 7 (0x80) = SS ending cleared (final boss beaten).">;
+
+    // [214-267] Game state flags (endings, NG+, CS progress, etc.)
+    // byte 214 (UnknownFlags2[0]):
+    //   bit 0 (0x01) = AM ending cleared
+    //   bit 1 (0x02) = VW ending cleared
+    //   bit 2 (0x04) = CF ending cleared
+    //   bit 3 (0x08) = NG+ unlock flag A (set by ExtrasMenu_State6_NewGamePlusUpdate, ID 0x6AB)
+    //   bit 4 (0x10) = NG+ unlock flag B (ID 0x6AC)
+    //   bits 5-7: UNKNOWN
+    // bytes 215-235: UNKNOWN game state flags
+    // byte 236 (UnknownFlags2[22]):  g_MainDataTable+0x11B0
+    //   bit 6 (0x40) = CS (Cindered Shadows) route chapter cleared (MainDataTable_GetRouteCompletionBit route 5)
+    //   bit 7 (0x80) = NG+ unlock flag C (ID 0x75F)
+    // byte 237 (UnknownFlags2[23]):
+    //   bit 0 (0x01) = NG+ unlock flag D (ID 0x760)
+    //   bits 1-7: UNKNOWN
+    // byte 238 (UnknownFlags2[24]):
+    //   bits 0-3: UNKNOWN
+    //   bit 4 (0x10) = NG+ unlock flag E (ID 0x76C)
+    //   bit 5 (0x20) = NG+ unlock flag F (ID 0x76D)
+    //   bit 6 (0x40) = NG+ unlock flag G (ID 0x76E)
+    //   bit 7 (0x80) = NG+ unlock flag H (ID 0x76F)
+    // byte 239 (UnknownFlags2[25]):  g_MainDataTable+0x11B3
+    //   bits 4-7: CS sub-progress flags (MapCompletion stages 2,3,4,6 for CS route)
+    // byte 240 (UnknownFlags2[26]):  g_MainDataTable+0x11B4
+    //   bits 0-1: CS sub-progress flags (MapCompletion stages 7,8 for CS route)
+    // bytes 241-267: UNKNOWN
+    byte GameStateFlags[54] <bgcolor=0xFFE8D0,
+        comment="Game state flags. Key identified bytes: [0] b0-2=endings AM/VW/CF cleared; b3-4=NG+ flags A,B. [22] b6=CS chapter-cleared; b7=NG+ flag C. [23] b0=NG+ flag D. [24] b4-7=NG+ flags E-H. [25] b4-7=CS sub-progress (MapCompletion stages 2,3,4,6). [26] b0-1=CS sub-progress (stages 7,8). Remaining bytes: Unknown. Zero on fresh file.">;
+
+    // [268] Route-cleared counter byte  (g_MainDataTable+0x11D0)
+    // This is a byte value (not a bitfield bit). It counts how many route chapters have been
+    // cleared across all playthroughs. Incremented by MapCompletion_UpdateGameState.
+    // Separate from the bitfield; capped at 0xFE (254), then held at 0xFF.
+    byte RouteClrCounter <bgcolor=0xE0FFE0,
+        comment="Route-cleared chapter counter (byte value, not a bitfield). Incremented each time a chapter map is cleared. Cap: 0xFE max; held at 0xFF after that. Cross-playthrough cumulative count.">;
+
+    // [269-275] DLC base unlock flags (present in both V5 and V7)
+    // Set all 7 bytes to 0xFF to unlock all base DLC content.
+    byte DLC_Unlock_V5[7] <bgcolor=0xFF9840,
+        comment="Base DLC unlock flags (bits 2152-2207). Present in both V5 and V7. Set all 7 bytes to 0xFF to unlock all base DLC paralogue/item content.">;
+
     if (g_IsV7) {
-        byte DLC_Unlock_V7[30] <bgcolor=0xFF7820, comment="Bits 2208-2447: 240 Cindered Shadows DLC unlock flags (V7 only). Set all to 0xFF = full DLC unlock.">;
-        byte V7_Padding[2] <bgcolor=0xF0F0F0, comment="Bits 2448-2463: unused tail bytes in V7 flags. Zero.">;
+        // [276-305] Cindered Shadows DLC unlock flags (V7 only)
+        // Set all 30 bytes to 0xFF to fully unlock Cindered Shadows content.
+        byte DLC_Unlock_V7[30] <bgcolor=0xFF7820,
+            comment="Cindered Shadows DLC unlock flags (bits 2208-2447). V7 only. Set all 30 bytes to 0xFF for full Cindered Shadows unlock.">;
+
+        // [306-307] Unused tail padding (V7 only)
+        byte V7_Padding[2] <bgcolor=0xF0F0F0,
+            comment="Unused tail bytes in V7 flags (bits 2448-2463). Always zero.">;
     }
+
 } SystemFlags <bgcolor=0xE8FFE8>;
 
 // Checksum verification

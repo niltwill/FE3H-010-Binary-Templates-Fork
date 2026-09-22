@@ -19,6 +19,7 @@
 LittleEndian();
 
 // Enums
+/*
 typedef enum <ubyte> {
     RightSlightlyUp = 0,
     UpSlightlyRight = 1,
@@ -29,6 +30,18 @@ typedef enum <ubyte> {
     Down = 6,
     DownRight = 7
 } Rotation;
+*/
+
+typedef enum <ubyte> {
+    East = 0,
+    NorthEast = 1,
+    North = 2,
+    NorthWest = 3,
+    West = 4,
+    SouthWest = 5,
+    South = 6,
+    SouthEast = 7
+} Rotation; // no time to test this - if still not this, feel free to correct it
 
 typedef enum <ubyte> {
     RecordType_Valid0 = 0,
